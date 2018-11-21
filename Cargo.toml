@@ -1,0 +1,14 @@
+[package]
+name = "classfile-editor"
+version = "0.1.0"
+authors = ["Lucius-Q-User <12174eb6@opayq.com>"]
+edition = "2018"
+
+[features]
+default = ["tree", "signature", "signature_tree"]
+tree = []
+signature = []
+signature_tree = ["signature"]
+
+[dependencies]
+bitflags = "1.0"
