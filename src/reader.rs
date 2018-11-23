@@ -42,7 +42,6 @@ pub enum ClassDecodeError {
     UnrecognizedFrameType,
     UnrecognizedTypeRef,
     InvalidUtf8,
-    InconsistentInnerClassAttribute,
     MissingSuperclass
 }
 
@@ -97,7 +96,7 @@ impl<I> Iterator for DecodeCESU8<I>
         if self.err {
             return None;
         }
-        let a = self.inner.next()? as u32;
+        let a = u32::from(self.inner.next()?);
         if a == 0 {
             self.err = true;
             return Some(Err(ClassDecodeError::InvalidUtf8))
@@ -110,7 +109,7 @@ impl<I> Iterator for DecodeCESU8<I>
             self.err = true;
             return Some(Err(ClassDecodeError::InvalidUtf8));
         }
-        let b = b.unwrap() as u32;
+        let b = u32::from(b.unwrap());
         if a & 0b11100000 == 0b11000000 {
             if let Some(ch) = char::from_u32(((a & 0x1F) << 6) + (b & 0x3F)) {
                 if ch == '\u{0}' || (ch >= '\u{80}' && ch <= '\u{7FF}') {
@@ -129,7 +128,7 @@ impl<I> Iterator for DecodeCESU8<I>
             self.err = true;
             return Some(Err(ClassDecodeError::InvalidUtf8));
         }
-        let c = c.unwrap() as u32;
+        let c = u32::from(c.unwrap());
         if a & 0b11110000 == 0b11100000 {
             if let Some(ch) = char::from_u32(((a & 0xF) << 12) + ((b & 0x3F) << 6) + (c & 0x3F)) {
                 if ch >= '\u{800}' && ch <= '\u{FFFF}' {
@@ -150,8 +149,8 @@ impl<I> Iterator for DecodeCESU8<I>
                 self.err = true;
                 return Some(Err(ClassDecodeError::InvalidUtf8));
             }
-            let e = e.unwrap() as u32;
-            let f = f.unwrap() as u32;
+            let e = u32::from(e.unwrap());
+            let f = u32::from(f.unwrap());
             if let Some(ch) = char::from_u32(0x10000 + ((b & 0x0f) << 16) + ((c & 0x3f) << 10) + ((e & 0x0f) << 6) + (f & 0x3f)) {
                 if ch > '\u{FFFF}' {
                     Some(Ok(ch))
@@ -252,25 +251,25 @@ impl<'a> ClassReader<'a> {
         Ok(this)
     }
     fn read_u1(&self, idx: usize) -> Result<u8> {
-        self.bytes.get(idx).map(|c| *c).ok_or(ClassDecodeError::UnexpectedEOF)
+        self.bytes.get(idx).cloned().ok_or(ClassDecodeError::UnexpectedEOF)
     }
     fn read_u2(&self, idx: usize) -> Result<u16> {
         let i = self.bytes.get(idx..idx + 2).ok_or(ClassDecodeError::UnexpectedEOF)?;
-        let merged = ((i[0] as u16) << 8) | (i[1] as u16);
+        let merged = (u16::from(i[0]) << 8) | u16::from(i[1]);
         Ok(merged)
     }
     fn read_u4(&self, idx: usize) -> Result<u32> {
         let i = self.bytes.get(idx..idx + 4).ok_or(ClassDecodeError::UnexpectedEOF)?;
-        let merged = ((i[0] as u32) << 24) | ((i[1] as u32) << 16) | ((i[2] as u32) << 8) | (i[3] as u32);
+        let merged = (u32::from(i[0]) << 24) | (u32::from(i[1]) << 16) | (u32::from(i[2]) << 8) | u32::from(i[3]);
         Ok(merged)
     }
     fn read_u8(&self, idx: usize) -> Result<u64> {
-        let l1 = self.read_u4(idx)? as u64;
-        let l0 = self.read_u4(idx + 4)? as u64;
+        let l1 = u64::from(self.read_u4(idx)?);
+        let l0 = u64::from(self.read_u4(idx + 4)?);
         Ok((l1 << 32) | l0)
     }
     fn read_f8(&self, idx: usize) -> Result<f64> {
-        self.read_u8(idx).map(|c| f64::from_bits(c))
+        self.read_u8(idx).map(f64::from_bits)
     }
     fn read_i8(&self, idx: usize) -> Result<i64> {
         self.read_u8(idx).map(|c| c as i64)
@@ -285,19 +284,19 @@ impl<'a> ClassReader<'a> {
         self.read_u1(idx).map(|c| c as i8)
     }
     fn read_f4(&self, idx: usize) -> Result<f32> {
-        self.read_u4(idx).map(|c| f32::from_bits(c))
+        self.read_u4(idx).map(f32::from_bits)
     }
     fn read_stringlike(&self, idx: usize, kind: u8, string_cache: &mut HashMap<usize, Rc<str>>) -> Result<Option<Rc<str>>> {
         let pool_index = self.read_u2(idx)? as usize;
         if pool_index == 0 {
             return Ok(None);
         }
-        let mut item_offset = self.const_pool.get(pool_index).map(|c| *c).ok_or(ClassDecodeError::ConstantPoolIndexOutOfBounds)?;
+        let mut item_offset = self.const_pool.get(pool_index).cloned().ok_or(ClassDecodeError::ConstantPoolIndexOutOfBounds)?;
         if self.read_u1(item_offset)? != kind {
             return Err(ClassDecodeError::ConstantPoolTypeMismatch);
         }
         item_offset += 1;
-        self.read_utf8(item_offset, string_cache).map(|e| Some(e))
+        self.read_utf8(item_offset, string_cache).map(Some)
     }
     fn read_class_maybe(&self, idx: usize, string_cache: &mut HashMap<usize, Rc<str>>) -> Result<Option<Rc<str>>> {
         self.read_stringlike(idx, constant_pool_entry::CLASS, string_cache)
@@ -323,7 +322,7 @@ impl<'a> ClassReader<'a> {
         if pool_index == 0 {
             return Ok(None);
         }
-        let offset = self.const_pool.get(pool_index).map(|c| *c).ok_or(ClassDecodeError::ConstantPoolIndexOutOfBounds)?;
+        let offset = self.const_pool.get(pool_index).cloned().ok_or(ClassDecodeError::ConstantPoolIndexOutOfBounds)?;
         let ent = string_cache.entry(offset);
         let sth = if let Entry::Vacant(_) = ent {
             if self.read_u1(offset)? != constant_pool_entry::UTF8 {
@@ -331,7 +330,7 @@ impl<'a> ClassReader<'a> {
             }
             let len = self.read_u2(offset + 1)? as usize;
             let strn = self.read_cesu8(offset + 3, len)?;
-            ent.or_insert(Rc::from(strn))
+            ent.or_insert_with(|| Rc::from(strn))
         } else {
             ent.or_insert_with(|| unreachable!())
         };
@@ -339,7 +338,7 @@ impl<'a> ClassReader<'a> {
     }
     fn read_cesu8(&self, data_offset: usize, data_size: usize) -> Result<String> {
         let slc = &self.bytes[data_offset..data_offset+data_size];
-        DecodeCESU8::new(slc.iter().map(|c| *c)).collect::<Result<String>>()
+        DecodeCESU8::new(slc.iter().cloned()).collect::<Result<String>>()
     }
     fn read_name_and_type_maybe(&self, at: usize, string_cache: &mut HashMap<usize, Rc<str>>) -> Result<Option<(Rc<str>, Rc<str>)>> {
         let item = self.read_u2(at)? as usize;
@@ -382,7 +381,7 @@ impl<'a> ClassReader<'a> {
     }
     pub fn get_access(&self) -> Result<ClassAccess> {
         let access_raw = self.read_u2(self.header_offset)?;
-        Ok(ClassAccess::from_bits_truncate(access_raw as u32))
+        Ok(ClassAccess::from_bits_truncate(access_raw.into()))
     }
     pub fn accept(&'a self, visitor: &'a mut dyn ClassVisitor, flags: ClassReaderFlags) -> Result<()> {
         let mut string_cache = HashMap::new();
@@ -498,7 +497,7 @@ impl<'a> ClassReader<'a> {
         if module != 0 {
             let mut at = module;
             let name = self.read_module(at, &mut string_cache)?;
-            let flags = ModuleFlags::from_bits_truncate(self.read_u2(at + 2)? as u32);
+            let flags = ModuleFlags::from_bits_truncate(self.read_u2(at + 2)?.into());
             let version = self.read_utf8_maybe(at + 4, &mut string_cache)?;
             let mv = visitor.visit_module(name, flags, version);
             at += 6;
@@ -517,7 +516,7 @@ impl<'a> ClassReader<'a> {
                 at += 2;
                 for _ in 0..num_req {
                     let md = self.read_module(at, &mut string_cache)?;
-                    let flags = RequireFlags::from_bits_truncate(self.read_u2(at + 2)? as u32);
+                    let flags = RequireFlags::from_bits_truncate(self.read_u2(at + 2)?.into());
                     let version = self.read_utf8_maybe(at + 4, &mut string_cache)?;
                     mv.visit_require(md, flags, version);
                     at += 6;
@@ -526,7 +525,7 @@ impl<'a> ClassReader<'a> {
                 at += 2;
                 for _ in 0..num_exp {
                     let export = self.read_package(at, &mut string_cache)?;
-                    let access = ExportFlags::from_bits_truncate(self.read_u2(at + 2)? as u32);
+                    let access = ExportFlags::from_bits_truncate(self.read_u2(at + 2)?.into());
                     let num_export_to = self.read_u2(at + 4)? as usize;
                     at += 6;
                     let mut export_to = Vec::with_capacity(num_export_to);
@@ -541,7 +540,7 @@ impl<'a> ClassReader<'a> {
                 at += 2;
                 for _ in 0..num_open {
                     let open = self.read_package(at, &mut string_cache)?;
-                    let access = ExportFlags::from_bits_truncate(self.read_u2(at + 2)? as u32);
+                    let access = ExportFlags::from_bits_truncate(self.read_u2(at + 2)?.into());
                     let num_open_to = self.read_u2(at + 4)? as usize;
                     at += 6;
                     let mut open_to = Vec::with_capacity(num_open_to);
@@ -642,13 +641,8 @@ impl<'a> ClassReader<'a> {
                 let inner = self.read_class(offset, &mut string_cache)?;
                 let outer = self.read_class_maybe(offset + 2, &mut string_cache)?;
                 let inner_name = self.read_utf8_maybe(offset + 4, &mut string_cache)?;
-                if version_major >= opcodes::V1_7 {
-                    if inner_name.is_none() && outer.is_some() {
-                        return Err(ClassDecodeError::InconsistentInnerClassAttribute);
-                    }
-                }
                 let access = InnerClassAccess::from_bits_truncate(
-                    self.read_u2(offset + 6)? as u32);
+                    self.read_u2(offset + 6)?.into());
                 visitor.visit_inner_class(inner, outer, inner_name, access);
                 offset += 8;
             }
@@ -669,7 +663,7 @@ impl<'a> ClassReader<'a> {
 
     fn read_field(&self, vis: &mut dyn ClassVisitor, mut at: usize, string_cache: &mut HashMap<usize, Rc<str>>,
                   bootstrap_methods: &[usize]) -> Result<usize> {
-        let access_raw = self.read_u2(at)? as u32;
+        let access_raw = self.read_u2(at)?.into();
         let mut access = FieldAccess::from_bits_truncate(access_raw);
         let name = self.read_utf8(at + 2, string_cache)?;
         let desc = self.read_utf8(at + 4, string_cache)?;
@@ -770,7 +764,7 @@ impl<'a> ClassReader<'a> {
     }
     fn read_method(&self, vis: &mut dyn ClassVisitor, mut at: usize, flags: ClassReaderFlags, bootstrap_methods: &[usize],
                    string_cache: &mut HashMap<usize, Rc<str>>) -> Result<usize> {
-        let access_raw = self.read_u2(at)? as u32;
+        let access_raw = self.read_u2(at)?.into();
         let mut access = MethodAccess::from_bits_truncate(access_raw);
         let name = self.read_utf8(at + 2, string_cache)?;
         let desc = self.read_utf8(at + 4, string_cache)?;
@@ -853,7 +847,7 @@ impl<'a> ClassReader<'a> {
             let count = self.read_u1(method_parameters)? as usize;
             for i in 0..count {
                 let name = self.read_utf8(method_parameters + 1 + i * 4, string_cache)?;
-                let access_raw = self.read_u2(method_parameters + 3 + i * 4)? as u32;
+                let access_raw = self.read_u2(method_parameters + 3 + i * 4)?.into();
                 let access = ParameterAccess::from_bits_truncate(access_raw);
                 visitor.visit_parameter(name, access);
             }
@@ -861,7 +855,9 @@ impl<'a> ClassReader<'a> {
         if annotation_default != 0 {
             let mut vis = visitor.visit_annotation_default();
             self.read_annotation_value(annotation_default, Rc::from(""), &mut vis, string_cache, bootstrap_methods)?;
-            vis.map(|c| c.visit_end());
+            if let Some(v) = vis {
+                v.visit_end()
+            }
         }
         if annotations_offset != 0 {
             let num = self.read_u2(annotations_offset)?;
@@ -1074,7 +1070,7 @@ impl<'a> ClassReader<'a> {
                             create_label(addr as isize, &mut labels)?;
                             let lb = labels[addr as usize].unwrap();
                             let line = self.read_u2(nat + 12)?;
-                            line_numbers.entry(lb).or_insert(Vec::new()).push(line);
+                            line_numbers.entry(lb).or_insert_with(Vec::new).push(line);
                             nat += 4;
                         }
                     }
@@ -1131,7 +1127,7 @@ impl<'a> ClassReader<'a> {
                                     0x46 => TypeRef::MethodReference,
                                     _ => unreachable!()
                                 };
-                                insn_annot.entry(insn_offset).or_insert(Vec::new()).push((kind, type_path, nat, visible));
+                                insn_annot.entry(insn_offset).or_insert_with(Vec::new).push((kind, type_path, nat, visible));
                                 nat = self.read_annotation_values(nat + 2, true, &mut None, string_cache, bootstrap_methods)?;
                             },
                             0x47 | 0x48 | 0x49 | 0x4A | 0x4B => {
@@ -1150,7 +1146,7 @@ impl<'a> ClassReader<'a> {
                                     0x4B => TypeRef::GenericMethodReference(type_arg),
                                     _ => unreachable!()
                                 };
-                                insn_annot.entry(insn_offset).or_insert(Vec::new()).push((kind, type_path, nat, visible));
+                                insn_annot.entry(insn_offset).or_insert_with(Vec::new).push((kind, type_path, nat, visible));
                                 nat = self.read_annotation_values(nat + 2, true, &mut None, string_cache, bootstrap_methods)?;
                             },
                             _ => {
@@ -1184,10 +1180,8 @@ impl<'a> ClassReader<'a> {
             for i in stack_map..(stack_map + stack_map_size - 2) {
                 if self.read_u1(i)? == 8 {
                     let v = self.read_u2(i + 1)? as usize;
-                    if v < code_length {
-                        if self.read_u1(code_begin + v)? == opcodes::NEW {
-                            create_label(v as isize, &mut labels)?;
-                        }
+                    if v < code_length && self.read_u1(code_begin + v)? == opcodes::NEW {
+                        create_label(v as isize, &mut labels)?;
                     }
                 }
             }
@@ -1208,7 +1202,6 @@ impl<'a> ClassReader<'a> {
             while !ran_out_of_frames &&
                 (frame_offset == offset || frame_offset == usize::max_value()) {
                     if frame_offset != usize::max_value() {
-
                         vis.visit_frame(frame_mode, local_count, &locals[0..local_count as usize], stack_count, &stack[0..stack_count as usize]);
                     }
                     if frame_count > 0 {
@@ -1233,7 +1226,7 @@ impl<'a> ClassReader<'a> {
                                 frame_mode = FrameMode::Same1;
                             } else if tag >= CHOP_FRAME && tag < SAME_FRAME_EXTENDED {
                                 frame_mode = FrameMode::Chop;
-                                local_count -= (SAME_FRAME_EXTENDED - tag) as u16;
+                                local_count -= u16::from(SAME_FRAME_EXTENDED - tag);
                                 stack_count = 0;
                             } else if tag == SAME_FRAME_EXTENDED {
                                 stack_count = 0;
@@ -1243,7 +1236,7 @@ impl<'a> ClassReader<'a> {
                                     stack_map = self.read_frame_type(&mut locals, i as usize, stack_map, &labels, string_cache)?;
                                 }
                                 frame_mode = FrameMode::Append;
-                                local_count += (tag - SAME_FRAME_EXTENDED) as u16;
+                                local_count += u16::from(tag - SAME_FRAME_EXTENDED);
                                 stack_count = 0;
                             } else {
                                 frame_mode = FrameMode::Full;
@@ -1258,7 +1251,6 @@ impl<'a> ClassReader<'a> {
                                     stack_map = self.read_frame_type(&mut stack, i as usize, stack_map, &labels, string_cache)?;
                                 }
                             }
-
                         }
                         frame_offset = frame_offset.wrapping_add(delta + 1);
                         frame_count -= 1;
@@ -1277,11 +1269,11 @@ impl<'a> ClassReader<'a> {
                     if opcode > opcodes::ISTORE {
                         let opcode_real = opcodes::ISTORE + ((opcode - 59) >> 2);
                         // ^ISTORE_0
-                        vis.visit_var_insn(opcode_real, (opcode - 59 & 0x3) as u16);
+                        vis.visit_var_insn(opcode_real, (opcode - 59 & 0x3).into());
                     } else {
                         let opcode_real = opcodes::ILOAD + ((opcode - 26) >> 2);
                         // ^ILOAD_0
-                        vis.visit_var_insn(opcode_real, (opcode - 26 & 0x3) as u16);
+                        vis.visit_var_insn(opcode_real, (opcode - 26 & 0x3).into());
                     }
                     at += 1;
                 },
@@ -1342,11 +1334,11 @@ impl<'a> ClassReader<'a> {
                     vis.visit_lookupswitch_insn(dflt, pairs);
                 },
                 InsnClass::Var => {
-                    vis.visit_var_insn(opcode, self.read_u1(at + 1)? as u16);
+                    vis.visit_var_insn(opcode, self.read_u1(at + 1)?.into());
                     at += 2;
                 },
                 InsnClass::Sbyte => {
-                    let operand = self.read_i1(at + 1)? as i32;
+                    let operand = self.read_i1(at + 1)?.into();
                     vis.visit_int_insn(opcode, operand);
                     at += 2;
                 },
@@ -1357,13 +1349,13 @@ impl<'a> ClassReader<'a> {
                     at += 2;
                 },
                 InsnClass::Short => {
-                    let operand = self.read_i2(at + 1)? as i32;
+                    let operand = self.read_i2(at + 1)?.into();
                     vis.visit_int_insn(opcode, operand);
                     at += 3;
                 },
                 InsnClass::Iinc => {
-                    let var = self.read_u1(at + 1)? as u16;
-                    let by = self.read_i1(at + 2)? as i16;
+                    let var = self.read_u1(at + 1)?.into();
+                    let by = self.read_i1(at + 2)?.into();
                     vis.visit_iinc_insn(var, by);
                     at += 3;
                 },
@@ -1517,8 +1509,10 @@ impl<'a> ClassReader<'a> {
                 at = self.read_annotation_value(at, Rc::from(""), &mut vis, string_cache, bootstrap_methods)?;
             }
         }
-        vis.as_mut().map(|v| v.visit_end());
-        return Ok(at);
+        if let Some(v) = vis {
+            v.visit_end();
+        }
+        Ok(at)
     }
     fn read_annotation_value(&self, mut at: usize, name: Rc<str>, vis: &mut Option<&mut dyn AnnotationVisitor>,
                              string_cache: &mut HashMap<usize, Rc<str>>, bootstrap_methods: &[usize]) -> Result<usize> {
@@ -1538,7 +1532,7 @@ impl<'a> ClassReader<'a> {
                     return Ok(at + 3);
                 }
             }
-        } else if let &mut Some(ref mut vis) = vis {
+        } else if let Some(vis) = vis {
             at += 1;
             match tag as char {
                 'I' | 'F' | 'D' | 'J' | 'B' | 'C' | 'S' | 'Z' => {
@@ -1762,33 +1756,33 @@ impl<'a> ClassReader<'a> {
     }
 
     fn read_const(&self, item: usize, string_cache: &mut HashMap<usize, Rc<str>>, bootstrap_methods: &[usize]) -> Result<ClassConstant> {
-        let at = self.const_pool.get(item).ok_or(ClassDecodeError::ConstantPoolIndexOutOfBounds)?;
-        let discr = self.read_u1(at + 0)?;
+        let at = *self.const_pool.get(item).ok_or(ClassDecodeError::ConstantPoolIndexOutOfBounds)?;
+        let discr = self.read_u1(at)?;
         match discr {
             constant_pool_entry::INT => {
-                self.read_i4(at + 1).map(|c| ClassConstant::Integer(c))
+                self.read_i4(at + 1).map(ClassConstant::Integer)
             },
             constant_pool_entry::FLOAT => {
-                self.read_f4(at + 1).map(|c| ClassConstant::Float(c))
+                self.read_f4(at + 1).map(ClassConstant::Float)
             },
             constant_pool_entry::LONG => {
-                self.read_i8(at + 1).map(|c| ClassConstant::Long(c))
+                self.read_i8(at + 1).map(ClassConstant::Long)
             },
             constant_pool_entry::DOUBLE => {
-                self.read_f8(at + 1).map(|c| ClassConstant::Double(c))
+                self.read_f8(at + 1).map(ClassConstant::Double)
             },
             constant_pool_entry::STR => {
-                self.read_utf8(at + 1, string_cache).map(|c| ClassConstant::String(c))
+                self.read_utf8(at + 1, string_cache).map(ClassConstant::String)
             },
             constant_pool_entry::CLASS => {
                 self.read_utf8(at + 1, string_cache)
-                    .map(|c| Type::new_object_type(c))
-                    .map(|c| ClassConstant::Class(c))
+                    .map(Type::new_object_type)
+                    .map(ClassConstant::Class)
             },
             constant_pool_entry::MTYPE => {
                 self.read_utf8(at + 1, string_cache)
-                    .map(|c| Type::new(c))
-                    .map(|c| ClassConstant::MethodType(c))
+                    .map(Type::new)
+                    .map(ClassConstant::MethodType)
             },
             constant_pool_entry::HANDLE => {
                 let kind = self.read_u1(at + 1)?;
@@ -1816,7 +1810,7 @@ fn create_label(offset: isize, labels: &mut [Option<Label>]) -> Result<Label> {
 
 }
 fn classify_insn(insn: u8) -> Result<InsnClass> {
-    INSN_CLASS_TABLE.get(insn as usize).map(|c| *c)
+    INSN_CLASS_TABLE.get(insn as usize).cloned()
         .ok_or(ClassDecodeError::UnrecognizedInstruction)
 }
 #[derive(Clone, Copy)]
