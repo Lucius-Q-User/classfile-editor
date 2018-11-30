@@ -110,7 +110,7 @@ impl<I> Iterator for DecodeCESU8<I>
             return Some(Err(ClassDecodeError::InvalidUtf8));
         }
         let b = u32::from(b.unwrap());
-        if a & 0b11100000 == 0b11000000 {
+        if a & 0b1110_0000 == 0b1100_0000 {
             if let Some(ch) = char::from_u32(((a & 0x1F) << 6) + (b & 0x3F)) {
                 if ch == '\u{0}' || (ch >= '\u{80}' && ch <= '\u{7FF}') {
                     return Some(Ok(ch));
@@ -129,7 +129,7 @@ impl<I> Iterator for DecodeCESU8<I>
             return Some(Err(ClassDecodeError::InvalidUtf8));
         }
         let c = u32::from(c.unwrap());
-        if a & 0b11110000 == 0b11100000 {
+        if a & 0b1111_0000 == 0b1110_0000 {
             if let Some(ch) = char::from_u32(((a & 0xF) << 12) + ((b & 0x3F) << 6) + (c & 0x3F)) {
                 if ch >= '\u{800}' && ch <= '\u{FFFF}' {
                     Some(Ok(ch))
@@ -175,7 +175,7 @@ fn into_handle(cs: ClassConstant) -> Handle {
 }
 
 impl<'a> ClassReader<'a> {
-    pub fn new<'b>(bytes: &'b [u8]) -> ClassReader<'b> {
+    pub fn new(bytes: &[u8]) -> ClassReader {
         let ret = ClassReader::new_innner(bytes);
         if let Ok(this) = ret {
             this

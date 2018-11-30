@@ -1,4 +1,4 @@
-pub const CLASS_MAGIC:u32 = 0xCAFEBABE;
+pub const CLASS_MAGIC:u32 = 0xCAFE_BABE;
 pub const V1_7:u16 = 51;
 pub const V1_8:u16 = 52;
 pub const V9:u16 = 53;

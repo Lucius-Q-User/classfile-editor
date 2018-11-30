@@ -884,66 +884,6 @@ mod tests {
             eprintln!("{}", function!());
         }
     }
-    struct SigVis;
-    impl signature::SignatureVisitor for SigVis {
-        fn visit_formal_type_parameter(&mut self, name: &str) {
-            eprintln!("{}: {:?}", function!(), name);
-        }
-        fn visit_base_type(&mut self, ty: char) {
-            eprintln!("{}: {:?}", function!(), ty);
-        }
-        fn visit_array_type(&mut self) -> Option<&mut dyn signature::SignatureVisitor> {
-            eprintln!("{}: ", function!());
-            Some(self)
-        }
-        fn visit_superclass(&mut self) -> Option<&mut dyn signature::SignatureVisitor> {
-            eprintln!("{}: ", function!());
-            Some(self)
-        }
-        fn visit_interface(&mut self) -> Option<&mut dyn signature::SignatureVisitor> {
-            eprintln!("{}: ", function!());
-            Some(self)
-        }
-        fn visit_class_bound(&mut self) -> Option<&mut dyn signature::SignatureVisitor> {
-            eprintln!("{}: ", function!());
-            Some(self)
-        }
-        fn visit_interface_bound(&mut self) -> Option<&mut dyn signature::SignatureVisitor> {
-            eprintln!("{}: ", function!());
-            Some(self)
-        }
-        fn visit_type_variable(&mut self, name: &str) {
-            eprintln!("{}: {:?}", function!(), name);
-        }
-        fn visit_inner_class_type(&mut self, name: &str) {
-            eprintln!("{}: {:?}", function!(), name);
-        }
-        fn visit_parameter_type(&mut self) -> Option<&mut dyn signature::SignatureVisitor> {
-            eprintln!("{}: ", function!());
-            Some(self)
-        }
-        fn visit_return_type(&mut self) -> Option<&mut dyn signature::SignatureVisitor> {
-            eprintln!("{}: ", function!());
-            Some(self)
-        }
-        fn visit_exception_type(&mut self) -> Option<&mut dyn signature::SignatureVisitor> {
-            eprintln!("{}: ", function!());
-            Some(self)
-        }
-        fn visit_class_type(&mut self, name: &str) {
-            eprintln!("{}: {:?}", function!(), name);
-        }
-        fn visit_end(&mut self) {
-            eprintln!("{}: ", function!());
-        }
-        fn visit_unbound_type_argument(&mut self) {
-            eprintln!("{}: ", function!());
-        }
-        fn visit_type_argument(&mut self, arg: signature::TypeConstraintKind) -> Option<&mut dyn signature::SignatureVisitor> {
-            eprintln!("{}: {:?}", function!(), arg);
-            Some(self)
-        }
-    }
     //#[test]
     fn it_works3() {
         let mut bytes = Vec::new();
@@ -951,14 +891,6 @@ mod tests {
         let reader = super::reader::ClassReader::new(&bytes);
         let mut visitor = SimpleLogger4 {};
         reader.accept(&mut visitor, ClassReaderFlags::empty()).unwrap();
-    }
-
-
-    #[test]
-    fn it_works4() {
-        let sig = "Lluser/t2tool/Cell<Ljava/util/List<Lluser/t2tool/BuildComponent;>;>;";
-        let reader = super::signature::SignatureReader::new(sig);
-        reader.accept_type(&mut SigVis {}).unwrap();
     }
     fn opcode_to_name(opcode: u8) -> &'static str {
         match opcode {

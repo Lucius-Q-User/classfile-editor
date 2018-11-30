@@ -58,7 +58,6 @@ impl FieldNode {
             fv.visit_end();
         }
     }
-    
 }
 impl FieldVisitor for FieldNode {
     fn visit_annotation(&mut self, desc: Rc<str>, visible: bool) -> Option<&mut dyn AnnotationVisitor> {
