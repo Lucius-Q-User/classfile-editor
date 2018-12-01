@@ -37,6 +37,142 @@ fn flat_map<T, R, F>(opt: Option<T>, f: F) -> Option<R> where F: FnOnce(T) -> Op
     }
 }
 
+#[derive(Debug)]
+pub struct SignatureWriter {
+    data: String,
+    visited_type_parameter: bool,
+    visited_method_args: bool,
+    argstack: Vec<bool>
+}
+
+impl SignatureWriter {
+    pub fn new() -> SignatureWriter {
+        SignatureWriter {
+            data: "".to_owned(),
+            visited_type_parameter: false,
+            visited_method_args: false,
+            argstack: Vec::new()
+        }
+    }
+    pub fn as_str(&self) -> &str {
+        &self.data
+    }
+    pub fn into_string(self) -> String {
+        self.data
+    }
+}
+
+impl<'a> SignatureVisitor<'a> for SignatureWriter {
+    fn visit_formal_type_parameter(&mut self, name: &'a str) {
+        if !self.visited_type_parameter {
+            self.data.push('<');
+            self.visited_type_parameter = true;
+        }
+        self.data += name;
+        self.data.push(':');
+    }
+    fn visit_class_bound<'b>(&'b mut self) -> Option<&'b mut dyn SignatureVisitor<'a>> {
+        Some(self)
+    }
+    fn visit_interface_bound<'b>(&'b mut self) -> Option<&'b mut dyn SignatureVisitor<'a>> {
+        self.data.push(':');
+        Some(self)
+    }
+    fn visit_superclass<'b>(&'b mut self) -> Option<&'b mut dyn SignatureVisitor<'a>> {
+        if self.visited_type_parameter {
+            self.visited_type_parameter = false;
+            self.data.push('>');
+        }
+        Some(self)
+    }
+    fn visit_interface<'b>(&'b mut self) -> Option<&'b mut dyn SignatureVisitor<'a>> {
+        Some(self)
+    }
+    fn visit_parameter_type<'b>(&'b mut self) -> Option<&'b mut dyn SignatureVisitor<'a>> {
+        if self.visited_type_parameter {
+            self.visited_type_parameter = false;
+            self.data.push('>');
+        }
+        if !self.visited_method_args {
+            self.visited_method_args = true;
+            self.data.push('(');
+        }
+        Some(self)
+    }
+    fn visit_return_type<'b>(&'b mut self) -> Option<&'b mut dyn SignatureVisitor<'a>> {
+        if self.visited_type_parameter {
+            self.visited_type_parameter = false;
+            self.data.push('>');
+        }
+        if !self.visited_method_args {
+            self.data.push('(');
+        }
+        self.data.push(')');
+        Some(self)
+    }
+    fn visit_exception_type<'b>(&'b mut self) -> Option<&'b mut dyn SignatureVisitor<'a>> {
+        self.data.push('^');
+        Some(self)
+    }
+    fn visit_base_type(&mut self, ty: char) {
+        self.data.push(ty);
+    }
+    fn visit_type_variable(&mut self, name: &'a str) {
+        self.data.push('T');
+        self.data.push_str(name);
+        self.data.push(';');
+    }
+    fn visit_array_type<'b>(&'b mut self) -> Option<&'b mut dyn SignatureVisitor<'a>> {
+        self.data.push('[');
+        Some(self)
+    }
+    fn visit_class_type(&mut self, name: &'a str) {
+        self.data.push('L');
+        self.data.push_str(name);
+        self.argstack.push(false);
+    }
+    fn visit_inner_class_type(&mut self, name: &'a str) {
+        if *self.argstack.last().unwrap() {
+            self.data.push('>');
+        }
+        self.argstack.pop();
+        self.data.push('.');
+        self.data.push_str(name);
+        self.argstack.push(false);
+    }
+    fn visit_unbound_type_argument(&mut self) {
+        if !*self.argstack.last().unwrap() {
+            *self.argstack.last_mut().unwrap() = true;
+            self.data.push('<');
+        }
+        self.data.push('*');
+    }
+    fn visit_type_argument<'b>(&'b mut self, arg: TypeConstraintKind) -> Option<&'b mut dyn SignatureVisitor<'a>> {
+        if !*self.argstack.last().unwrap() {
+            *self.argstack.last_mut().unwrap() = true;
+            self.data.push('<');
+        }
+        match arg {
+            TypeConstraintKind::Extends => {
+                self.data.push('+');
+            },
+            TypeConstraintKind::Super => {
+                self.data.push('-');
+            },
+            _ => {
+            }
+        }
+        Some(self)
+    }
+    fn visit_end(&mut self) {
+        if *self.argstack.last().unwrap() {
+            self.data.push('>');
+        }
+        self.argstack.pop();
+        self.data.push(';');
+    }
+}
+
 pub trait SignatureVisitor<'a> {
     fn get_wrapped_visitor<'b>(&'b self) -> Option<&'b mut dyn SignatureVisitor<'a>> {
         None
