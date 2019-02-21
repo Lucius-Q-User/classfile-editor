@@ -284,17 +284,25 @@ pub fn parse<'b>(sig: &'b str, vis: &mut dyn SignatureVisitor<'b>) -> Result<()>
     let bytes = sig.as_bytes();
     let mut ptr;
     if bytes[0] == b'<' {
-        ptr = 1;
-        while bytes[ptr] != b'>' {
+        ptr = 2;
+        loop {
             let rend = find(bytes, ptr, b':').ok_or(SignatureDecodeError::UnterminatedTypeVar)?;
-            vis.visit_formal_type_parameter(&sig[ptr..rend]);
+            vis.visit_formal_type_parameter(&sig[ptr - 1..rend]);
             ptr = rend + 1;
-            if bytes[ptr] == b'L' || bytes[ptr] == b'T' || bytes[ptr] == b'[' {
+            let mut cc = bytes[ptr];
+            if cc == b'L' || cc == b'T' || cc == b'[' {
                 ptr = read_type(sig, ptr, vis.visit_class_bound())?;
             }
-            while bytes[ptr] == b':' {
+            loop {
+                cc = bytes[ptr];
                 ptr += 1;
+                if cc != b':' {
+                    break;
+                }
                 ptr = read_type(sig, ptr, vis.visit_interface_bound())?;
+            }
+            if cc == b'>' {
+                break;
             }
         }
     } else {

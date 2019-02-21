@@ -32,7 +32,7 @@ impl<'a> TypeParameterNode<'a> {
 }
 
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Default)]
 pub struct ReferenceTypeNode<'a> {
     pub data: ReferenceTypeData<'a>,
     pub array_dimensions: u8
@@ -43,6 +43,11 @@ pub enum ReferenceTypeData<'a> {
     TypeVariable(&'a str),
     ClassType(Vec<SimpleClassTypeSignature<'a>>),
     BaseType(char)
+}
+impl<'a> Default for ReferenceTypeData<'a> {
+    fn default() -> Self {
+        ReferenceTypeData::BaseType('\0')
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -170,7 +175,7 @@ pub struct TypeArgument<'a> {
     pub constraint: TypeConstraintKind,
     pub value: Option<ReferenceTypeNode<'a>>
 }
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Default)]
 pub struct ClassSignature<'a> {
     pub type_parameters: Vec<TypeParameterNode<'a>>,
     pub superclass_bound: ReferenceTypeNode<'a>,
@@ -225,7 +230,7 @@ impl<'a> ClassSignature<'a> {
 }
 
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Default)]
 pub struct MethodSignature<'a> {
     pub type_parameters: Vec<TypeParameterNode<'a>>,
     pub parameter_types: Vec<ReferenceTypeNode<'a>>,

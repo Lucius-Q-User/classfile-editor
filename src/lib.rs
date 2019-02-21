@@ -1,4 +1,5 @@
 #![feature(core_intrinsics)]
+#![feature(try_from)]
 pub mod opcodes;
 mod somewhat_unique_id;
 use crate::somewhat_unique_id::UID;
@@ -10,6 +11,7 @@ pub mod tree;
 #[cfg(feature = "signature")]
 pub mod signature;
 pub mod reader;
+pub mod writer;
 use bitflags::*;
 
 
@@ -29,7 +31,7 @@ bitflags! {
 }
 
 bitflags! {
-    pub struct InnerClassAccess: u32 {
+    pub struct InnerClassAccess: u16 {
         const ACC_PUBLIC = 0x1;
         const ACC_PRIVATE = 0x2;
         const ACC_PROTECTED = 0x4;
@@ -77,7 +79,7 @@ bitflags! {
 }
 
 bitflags! {
-    pub struct ParameterAccess: u32 {
+    pub struct ParameterAccess: u16 {
         const ACC_FINAL = 0x10;
         const ACC_SYNTHETIC = 0x1000;
         const ACC_MANDATED = 0x8000;
@@ -85,7 +87,7 @@ bitflags! {
 }
 
 bitflags! {
-    pub struct ModuleFlags: u32 {
+    pub struct ModuleFlags: u16 {
         const ACC_OPEN = 0x20;
         const ACC_SYNTHETIC = 0x1000;
         const ACC_MANDATED = 0x8000;
@@ -93,7 +95,7 @@ bitflags! {
 }
 
 bitflags! {
-    pub struct RequireFlags: u32 {
+    pub struct RequireFlags: u16 {
         const ACC_TRANSITIVE = 0x20;
         const ACC_STATIC_PHASE = 0x40;
         const ACC_SYNTHETIC = 0x1000;
@@ -102,7 +104,7 @@ bitflags! {
 }
 
 bitflags! {
-    pub struct ExportFlags: u32 {
+    pub struct ExportFlags: u16 {
         const ACC_SYNTHETIC = 0x1000;
         const ACC_MANDATED = 0x8000;
     }
@@ -114,7 +116,8 @@ pub struct Handle {
     tag: u8,
     owner: Rc<str>,
     name: Rc<str>,
-    desc: Rc<str>
+    desc: Rc<str>,
+    itf: bool
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConstantDynamic {
@@ -125,9 +128,9 @@ pub struct ConstantDynamic {
 }
 
 impl Handle {
-    fn new(tag: u8, owner: Rc<str>, name: Rc<str>, desc: Rc<str>) -> Handle {
+    fn new(tag: u8, owner: Rc<str>, name: Rc<str>, desc: Rc<str>, itf: bool) -> Handle {
         Handle {
-            tag, owner, name, desc
+            tag, owner, name, desc, itf
         }
     }
 }
@@ -884,8 +887,9 @@ mod tests {
             eprintln!("{}", function!());
         }
     }
-    //#[test]
+    #[test]
     fn it_works3() {
+        eprintln!("{}", std::mem::size_of::<writer::ClassWriter>());
         let mut bytes = Vec::new();
         File::open("/Users/Alice/Desktop/eclipse-workspace/class2json/target/classes/class2json/parse/Main.class").unwrap().read_to_end(&mut bytes).unwrap();
         let reader = super::reader::ClassReader::new(&bytes);

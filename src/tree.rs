@@ -1003,6 +1003,11 @@ impl ClassVisitor for ClassNode {
     }
 }
 
+impl Default for ClassNode {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl ClassNode {
     pub fn new() -> ClassNode {
@@ -1090,23 +1095,5 @@ impl ClassNode {
             me.accept_cv(vis);
         }
         vis.visit_end();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use ::std::fs::File;
-    use ::std::io::Read;
-    #[test]
-    fn it_works52() {
-        let mut bytes = Vec::new();
-        File::open("/Users/Alice/Desktop/eclipse-workspace/class2json/target/classes/class2json/parse/Main.class").unwrap().read_to_end(&mut bytes).unwrap();
-        let reader = crate::reader::ClassReader::new(&bytes);
-        let mut visitor = super::ClassNode::new();
-        reader.accept(&mut visitor, crate::reader::ClassReaderFlags::empty()).unwrap();
-        let mut v2 = super::ClassNode::new();
-        visitor.accept(&mut v2);
-        //println!("{:?}", visitor);
-        assert!(v2 == visitor);
     }
 }

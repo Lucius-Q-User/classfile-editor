@@ -1,4 +1,4 @@
-pub const CLASS_MAGIC:u32 = 0xCAFE_BABE;
+pub(crate) const CLASS_MAGIC:u32 = 0xCAFE_BABE;
 pub const V1_7:u16 = 51;
 pub const V1_8:u16 = 52;
 pub const V9:u16 = 53;
@@ -162,3 +162,22 @@ pub const MONITOREXIT:u8 = 195;
 pub const MULTIANEWARRAY:u8 = 197;
 pub const IFNULL:u8 = 198;
 pub const IFNONNULL:u8 = 199;
+
+
+pub(crate) const CONSTANT_Utf8:u8 = 1;
+pub(crate) const CONSTANT_Integer:u8 = 3;
+pub(crate) const CONSTANT_Float:u8 = 4;
+pub(crate) const CONSTANT_Long:u8 = 5;
+pub(crate) const CONSTANT_Double:u8 = 6;
+pub(crate) const CONSTANT_Class:u8 = 7;
+pub(crate) const CONSTANT_String:u8 = 8;
+pub(crate) const CONSTANT_Fieldref:u8 = 9;
+pub(crate) const CONSTANT_Methodref:u8 = 10;
+pub(crate) const CONSTANT_InterfaceMethodref:u8 = 11;
+pub(crate) const CONSTANT_NameAndType:u8 = 12;
+pub(crate) const CONSTANT_MethodHandle:u8 = 15;
+pub(crate) const CONSTANT_MethodType:u8 = 16;
+pub(crate) const CONSTANT_Dynamic:u8 = 17;
+pub(crate) const CONSTANT_InvokeDynamic:u8 = 18;
+pub(crate) const CONSTANT_Module:u8 = 19;
+pub(crate) const CONSTANT_Package:u8 = 20;

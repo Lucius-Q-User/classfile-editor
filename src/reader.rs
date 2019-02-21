@@ -6,7 +6,8 @@ use super::{AnnotationPrimitive, ClassConstant, ConstantDynamic};
 use super::{Label, Handle, FrameItem, FrameMode, opcodes};
 use std::{char,
     collections::hash_map::{HashMap, Entry},
-    rc::Rc
+    rc::Rc,
+    convert::TryInto,
 };
 use bitflags::*;
 
@@ -41,8 +42,7 @@ pub enum ClassDecodeError {
     InvalidCodeOffset,
     UnrecognizedFrameType,
     UnrecognizedTypeRef,
-    InvalidUtf8,
-    MissingSuperclass
+    InvalidUtf8
 }
 
 
@@ -54,27 +54,6 @@ pub struct ClassReader<'a> {
     const_pool: Vec<usize>,
     header_offset: usize,
     error: Option<ClassDecodeError>,
-}
-
-mod constant_pool_entry {
-    pub(crate) const UTF8:u8 = 1;
-    pub(crate) const INT:u8 = 3;
-    pub(crate) const FLOAT:u8 = 4;
-    pub(crate) const LONG:u8 = 5;
-    pub(crate) const DOUBLE:u8 = 6;
-    pub(crate) const CLASS:u8 = 7;
-    pub(crate) const STR:u8 = 8;
-    pub(crate) const FIELD:u8 = 9;
-    pub(crate) const METH:u8 = 10;
-    pub(crate) const IMETH:u8 = 11;
-    pub(crate) const NAME_TYPE:u8 = 12;
-    pub(crate) const HANDLE:u8 = 15;
-    pub(crate) const MTYPE:u8 = 16;
-    pub(crate) const CONDY:u8 = 17;
-    pub(crate) const INDY:u8 = 18;
-    
-    pub(crate) const MODULE:u8 = 19;
-    pub(crate) const PACKAGE:u8 = 20;
 }
 
 struct DecodeCESU8<I> {
@@ -211,33 +190,33 @@ impl<'a> ClassReader<'a> {
         while i < const_pool_len {
             this.const_pool.push(offset);
             match this.read_u1(offset)? {
-                constant_pool_entry::FIELD |
-                constant_pool_entry::METH |
-                constant_pool_entry::IMETH |
-                constant_pool_entry::INT |
-                constant_pool_entry::FLOAT |
-                constant_pool_entry::NAME_TYPE |
-                constant_pool_entry::INDY |
-                constant_pool_entry::CONDY => {
+                opcodes::CONSTANT_Fieldref |
+                opcodes::CONSTANT_Methodref |
+                opcodes::CONSTANT_InterfaceMethodref |
+                opcodes::CONSTANT_Integer |
+                opcodes::CONSTANT_Float |
+                opcodes::CONSTANT_NameAndType |
+                opcodes::CONSTANT_InvokeDynamic |
+                opcodes::CONSTANT_Dynamic => {
                     offset += 5;
                 },
-                constant_pool_entry::LONG |
-                constant_pool_entry::DOUBLE => {
+                opcodes::CONSTANT_Long |
+                opcodes::CONSTANT_Double => {
                     offset += 9;
                     this.const_pool.push(0);
                     i += 1;
                 },
-                constant_pool_entry::HANDLE => {
+                opcodes::CONSTANT_MethodHandle => {
                     offset += 4;
                 },
-                constant_pool_entry::CLASS |
-                constant_pool_entry::STR |
-                constant_pool_entry::MTYPE |
-                constant_pool_entry::PACKAGE |
-                constant_pool_entry::MODULE => {
+                opcodes::CONSTANT_Class |
+                opcodes::CONSTANT_String |
+                opcodes::CONSTANT_MethodType |
+                opcodes::CONSTANT_Package |
+                opcodes::CONSTANT_Module => {
                     offset += 3;
                 },
-                constant_pool_entry::UTF8 => {
+                opcodes::CONSTANT_Utf8 => {
                     let len = this.read_u2(offset + 1)? as usize;
                     offset += 3 + len;
                 },
@@ -255,18 +234,15 @@ impl<'a> ClassReader<'a> {
     }
     fn read_u2(&self, idx: usize) -> Result<u16> {
         let i = self.bytes.get(idx..idx + 2).ok_or(ClassDecodeError::UnexpectedEOF)?;
-        let merged = (u16::from(i[0]) << 8) | u16::from(i[1]);
-        Ok(merged)
+        Ok(u16::from_be_bytes(i.try_into().unwrap()))
     }
     fn read_u4(&self, idx: usize) -> Result<u32> {
         let i = self.bytes.get(idx..idx + 4).ok_or(ClassDecodeError::UnexpectedEOF)?;
-        let merged = (u32::from(i[0]) << 24) | (u32::from(i[1]) << 16) | (u32::from(i[2]) << 8) | u32::from(i[3]);
-        Ok(merged)
+        Ok(u32::from_be_bytes(i.try_into().unwrap()))
     }
     fn read_u8(&self, idx: usize) -> Result<u64> {
-        let l1 = u64::from(self.read_u4(idx)?);
-        let l0 = u64::from(self.read_u4(idx + 4)?);
-        Ok((l1 << 32) | l0)
+        let i = self.bytes.get(idx..idx + 8).ok_or(ClassDecodeError::UnexpectedEOF)?;
+        Ok(u64::from_be_bytes(i.try_into().unwrap()))
     }
     fn read_f8(&self, idx: usize) -> Result<f64> {
         self.read_u8(idx).map(f64::from_bits)
@@ -299,10 +275,10 @@ impl<'a> ClassReader<'a> {
         self.read_utf8(item_offset, string_cache).map(Some)
     }
     fn read_class_maybe(&self, idx: usize, string_cache: &mut HashMap<usize, Rc<str>>) -> Result<Option<Rc<str>>> {
-        self.read_stringlike(idx, constant_pool_entry::CLASS, string_cache)
+        self.read_stringlike(idx, opcodes::CONSTANT_Class, string_cache)
     }
     fn read_module(&self, idx: usize, string_cache: &mut HashMap<usize, Rc<str>>) -> Result<Rc<str>> {
-        let md = self.read_stringlike(idx, constant_pool_entry::MODULE, string_cache)?;
+        let md = self.read_stringlike(idx, opcodes::CONSTANT_Module, string_cache)?;
         md.ok_or(ClassDecodeError::ConstantPoolIndexOutOfBounds)
     }
     fn read_class(&self, idx:usize, string_cache: &mut HashMap<usize, Rc<str>>) -> Result<Rc<str>> {
@@ -310,7 +286,7 @@ impl<'a> ClassReader<'a> {
         cl.ok_or(ClassDecodeError::ConstantPoolIndexOutOfBounds)
     }
     fn read_package(&self, idx:usize, string_cache: &mut HashMap<usize, Rc<str>>) -> Result<Rc<str>> {
-        let pk = self.read_stringlike(idx, constant_pool_entry::PACKAGE, string_cache)?;
+        let pk = self.read_stringlike(idx, opcodes::CONSTANT_Package, string_cache)?;
         pk.ok_or(ClassDecodeError::ConstantPoolIndexOutOfBounds)
     }
     fn read_utf8(&self, idx: usize, string_cache: &mut HashMap<usize, Rc<str>>) -> Result<Rc<str>> {
@@ -325,7 +301,7 @@ impl<'a> ClassReader<'a> {
         let offset = self.const_pool.get(pool_index).cloned().ok_or(ClassDecodeError::ConstantPoolIndexOutOfBounds)?;
         let ent = string_cache.entry(offset);
         let sth = if let Entry::Vacant(_) = ent {
-            if self.read_u1(offset)? != constant_pool_entry::UTF8 {
+            if self.read_u1(offset)? != opcodes::CONSTANT_Utf8 {
                 return Err(ClassDecodeError::ConstantPoolTypeMismatch)
             }
             let len = self.read_u2(offset + 1)? as usize;
@@ -345,7 +321,7 @@ impl<'a> ClassReader<'a> {
         if item != 0 {
             let &cpi = self.const_pool.get(item)
                 .ok_or(ClassDecodeError::ConstantPoolIndexOutOfBounds)?;
-            if self.read_u1(cpi)? != constant_pool_entry::NAME_TYPE {
+            if self.read_u1(cpi)? != opcodes::CONSTANT_NameAndType {
                 return Err(ClassDecodeError::ConstantPoolTypeMismatch)
             }
             let enclosing_name = self.read_utf8(cpi + 1, string_cache)?;
@@ -363,13 +339,14 @@ impl<'a> ClassReader<'a> {
             Err(ClassDecodeError::ConstantPoolIndexOutOfBounds)
         }
     }
-    fn read_method_ref(&self, at: usize, string_cache: &mut HashMap<usize, Rc<str>>) -> Result<(Rc<str>, (Rc<str>, Rc<str>))> {
+    fn read_method_ref(&self, at: usize, string_cache: &mut HashMap<usize, Rc<str>>) -> Result<(Rc<str>, (Rc<str>, Rc<str>), bool)> {
         let item = self.read_u2(at)? as usize;
         let cpi = self.const_pool.get(item)
             .ok_or(ClassDecodeError::ConstantPoolIndexOutOfBounds)?;
+        let itf = self.read_u1(*cpi)? == opcodes::CONSTANT_InterfaceMethodref;
         let owner = self.read_class(cpi + 1, string_cache)?;
         let nat = self.read_name_and_type(cpi + 3, string_cache)?;
-        Ok((owner, nat))
+        Ok((owner, nat, itf))
     }
     pub fn get_name(&self) -> Result<Rc<str>> {
         let mut string_cache = HashMap::new();
@@ -394,9 +371,6 @@ impl<'a> ClassReader<'a> {
         let mut access = self.get_access()?;
         let name = self.read_class(hdr + 2, &mut string_cache)?;
         let super_class = self.read_class_maybe(hdr + 4, &mut string_cache)?;
-        if super_class.is_none() && &*name != "java/lang/Object" {
-            return Err(ClassDecodeError::MissingSuperclass);
-        }
         let num_interfaces = self.read_u2(hdr + 6)?;
         let mut interfaces = Vec::new();
         hdr += 8;
@@ -497,7 +471,7 @@ impl<'a> ClassReader<'a> {
         if module != 0 {
             let mut at = module;
             let name = self.read_module(at, &mut string_cache)?;
-            let flags = ModuleFlags::from_bits_truncate(self.read_u2(at + 2)?.into());
+            let flags = ModuleFlags::from_bits_truncate(self.read_u2(at + 2)?);
             let version = self.read_utf8_maybe(at + 4, &mut string_cache)?;
             let mv = visitor.visit_module(name, flags, version);
             at += 6;
@@ -516,7 +490,7 @@ impl<'a> ClassReader<'a> {
                 at += 2;
                 for _ in 0..num_req {
                     let md = self.read_module(at, &mut string_cache)?;
-                    let flags = RequireFlags::from_bits_truncate(self.read_u2(at + 2)?.into());
+                    let flags = RequireFlags::from_bits_truncate(self.read_u2(at + 2)?);
                     let version = self.read_utf8_maybe(at + 4, &mut string_cache)?;
                     mv.visit_require(md, flags, version);
                     at += 6;
@@ -525,7 +499,7 @@ impl<'a> ClassReader<'a> {
                 at += 2;
                 for _ in 0..num_exp {
                     let export = self.read_package(at, &mut string_cache)?;
-                    let access = ExportFlags::from_bits_truncate(self.read_u2(at + 2)?.into());
+                    let access = ExportFlags::from_bits_truncate(self.read_u2(at + 2)?);
                     let num_export_to = self.read_u2(at + 4)? as usize;
                     at += 6;
                     let mut export_to = Vec::with_capacity(num_export_to);
@@ -540,7 +514,7 @@ impl<'a> ClassReader<'a> {
                 at += 2;
                 for _ in 0..num_open {
                     let open = self.read_package(at, &mut string_cache)?;
-                    let access = ExportFlags::from_bits_truncate(self.read_u2(at + 2)?.into());
+                    let access = ExportFlags::from_bits_truncate(self.read_u2(at + 2)?);
                     let num_open_to = self.read_u2(at + 4)? as usize;
                     at += 6;
                     let mut open_to = Vec::with_capacity(num_open_to);
@@ -642,7 +616,7 @@ impl<'a> ClassReader<'a> {
                 let outer = self.read_class_maybe(offset + 2, &mut string_cache)?;
                 let inner_name = self.read_utf8_maybe(offset + 4, &mut string_cache)?;
                 let access = InnerClassAccess::from_bits_truncate(
-                    self.read_u2(offset + 6)?.into());
+                    self.read_u2(offset + 6)?);
                 visitor.visit_inner_class(inner, outer, inner_name, access);
                 offset += 8;
             }
@@ -847,7 +821,7 @@ impl<'a> ClassReader<'a> {
             let count = self.read_u1(method_parameters)? as usize;
             for i in 0..count {
                 let name = self.read_utf8(method_parameters + 1 + i * 4, string_cache)?;
-                let access_raw = self.read_u2(method_parameters + 3 + i * 4)?.into();
+                let access_raw = self.read_u2(method_parameters + 3 + i * 4)?;
                 let access = ParameterAccess::from_bits_truncate(access_raw);
                 visitor.visit_parameter(name, access);
             }
@@ -1759,38 +1733,38 @@ impl<'a> ClassReader<'a> {
         let at = *self.const_pool.get(item).ok_or(ClassDecodeError::ConstantPoolIndexOutOfBounds)?;
         let discr = self.read_u1(at)?;
         match discr {
-            constant_pool_entry::INT => {
+            opcodes::CONSTANT_Integer => {
                 self.read_i4(at + 1).map(ClassConstant::Integer)
             },
-            constant_pool_entry::FLOAT => {
+            opcodes::CONSTANT_Float => {
                 self.read_f4(at + 1).map(ClassConstant::Float)
             },
-            constant_pool_entry::LONG => {
+            opcodes::CONSTANT_Long => {
                 self.read_i8(at + 1).map(ClassConstant::Long)
             },
-            constant_pool_entry::DOUBLE => {
+            opcodes::CONSTANT_Double => {
                 self.read_f8(at + 1).map(ClassConstant::Double)
             },
-            constant_pool_entry::STR => {
+            opcodes::CONSTANT_String => {
                 self.read_utf8(at + 1, string_cache).map(ClassConstant::String)
             },
-            constant_pool_entry::CLASS => {
+            opcodes::CONSTANT_Class => {
                 self.read_utf8(at + 1, string_cache)
                     .map(Type::new_object_type)
                     .map(ClassConstant::Class)
             },
-            constant_pool_entry::MTYPE => {
+            opcodes::CONSTANT_MethodType => {
                 self.read_utf8(at + 1, string_cache)
                     .map(Type::new)
                     .map(ClassConstant::MethodType)
             },
-            constant_pool_entry::HANDLE => {
+            opcodes::CONSTANT_MethodHandle => {
                 let kind = self.read_u1(at + 1)?;
                 let info = self.read_method_ref(at + 2, string_cache)?;
                 Ok(ClassConstant::MethodHandle(
-                    Handle::new(kind,info.0, (info.1).0, (info.1).1)))
+                    Handle::new(kind,info.0, (info.1).0, (info.1).1, info.2)))
             },
-            constant_pool_entry::CONDY => {
+            opcodes::CONSTANT_Dynamic => {
                 Ok(ClassConstant::ConstantDynamic(self.read_indy(at + 1, bootstrap_methods, string_cache)?))
             },
             _ => {
