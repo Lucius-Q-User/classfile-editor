@@ -5,11 +5,12 @@ authors = ["Lucius-Q-User <12174eb6@opayq.com>"]
 edition = "2018"
 
 [features]
-default = ["tree", "signature", "signature_tree"]
+default = ["tree", "signature", "signature_tree", "reader"]
 tree = []
 signature = []
 signature_tree = ["signature"]
+reader = []
 
 [dependencies]
 bitflags = "1.0"
-linked-hash-map = "0.5.1"
+cesu8 = "1.1.0"

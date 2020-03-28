@@ -1,5 +1,4 @@
 #![feature(core_intrinsics)]
-#![feature(try_from)]
 pub mod opcodes;
 mod somewhat_unique_id;
 use crate::somewhat_unique_id::UID;
@@ -10,8 +9,8 @@ use std::rc::Rc;
 pub mod tree;
 #[cfg(feature = "signature")]
 pub mod signature;
+#[cfg(feature = "reader")]
 pub mod reader;
-pub mod writer;
 use bitflags::*;
 
 
@@ -110,27 +109,53 @@ bitflags! {
     }
 }
 
+#[derive(Debug, Copy, Clone, PartialOrd, PartialEq, Eq, Ord)]
+pub struct ClassVersion {
+    pub major: u16,
+    pub minor: u16
+}
+
+impl ClassVersion {
+    pub fn new(major: u16, minor: u16) -> ClassVersion {
+        ClassVersion {
+            major, minor
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct NameAndType {
+    pub name: Rc<str>,
+    pub ty: Rc<str>
+}
+impl NameAndType {
+    pub fn new(name: Rc<str>, ty: Rc<str>) -> NameAndType {
+        NameAndType {
+            name, ty
+        }
+    }
+}
+
+pub type TypePath = Vec<TypePathEntry>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Handle {
     tag: u8,
     owner: Rc<str>,
-    name: Rc<str>,
-    desc: Rc<str>,
+    entity: NameAndType,
     itf: bool
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConstantDynamic {
-    name: Rc<str>,
-    desc: Rc<str>,
+    method: NameAndType,
     bootstrap: Handle,
     args: Vec<ClassConstant>
 }
 
 impl Handle {
-    fn new(tag: u8, owner: Rc<str>, name: Rc<str>, desc: Rc<str>, itf: bool) -> Handle {
+    pub fn new(tag: u8, owner: Rc<str>, entity: NameAndType, itf: bool) -> Handle {
         Handle {
-            tag, owner, name, desc, itf
+            tag, owner, entity, itf
         }
     }
 }
@@ -414,7 +439,7 @@ pub trait FieldVisitor {
             None
         }
     }
-    fn visit_type_annotation(&mut self, type_ref: TypeRef, type_path: Vec<TypePathEntry>, desc: Rc<str>, visible: bool) -> Option<&mut dyn AnnotationVisitor> {
+    fn visit_type_annotation(&mut self, type_ref: TypeRef, type_path: TypePath, desc: Rc<str>, visible: bool) -> Option<&mut dyn AnnotationVisitor> {
         if let Some(vis) = self.get_wrapped_visitor() {
             vis.visit_type_annotation(type_ref, type_path, desc, visible)
         } else {
@@ -436,9 +461,9 @@ pub trait MethodVisitor {
             vis.visit_tableswitch_insn(min, max, dflt, labels);
         }
     }
-    fn visit_frame(&mut self, mode: FrameMode, n_locals: u16, locals: &[FrameItem], n_stack: u16, stack: &[FrameItem]) {
+    fn visit_frame(&mut self, mode: FrameMode, locals: &[FrameItem], stack: &[FrameItem]) {
         if let Some(vis) = self.get_wrapped_visitor() {
-            vis.visit_frame(mode, n_locals, locals, n_stack, stack);
+            vis.visit_frame(mode, locals, stack);
         }
     }
     fn visit_insn(&mut self, opcode: u8) {
@@ -466,14 +491,14 @@ pub trait MethodVisitor {
             vis.visit_lookupswitch_insn(dflt, pairs);
         }
     }
-    fn visit_indy_insn(&mut self, name: Rc<str>, desc: Rc<str>, bsm: Handle, args: Vec<ClassConstant>) {
+    fn visit_indy_insn(&mut self, method: NameAndType, bsm: Handle, args: Vec<ClassConstant>) {
         if let Some(vis) = self.get_wrapped_visitor() {
-            vis.visit_indy_insn(name, desc, bsm, args);
+            vis.visit_indy_insn(method, bsm, args);
         }
     }
-    fn visit_field_method_insn(&mut self, opcode: u8, owner: Rc<str>, name: Rc<str>, desc: Rc<str>) {
+    fn visit_field_method_insn(&mut self, opcode: u8, owner: Rc<str>, method: NameAndType) {
         if let Some(vis) = self.get_wrapped_visitor() {
-            vis.visit_field_method_insn(opcode, owner, name, desc);
+            vis.visit_field_method_insn(opcode, owner, method);
         }
     }
     fn visit_jump_insn(&mut self, opcode: u8, label: Label) {
@@ -496,9 +521,9 @@ pub trait MethodVisitor {
             vis.visit_int_insn(opcode, operand);
         }
     }
-    fn visit_local_var(&mut self, name: Rc<str>, desc: Rc<str>, sig: Option<Rc<str>>, span: LocalVariableSpan) {
+    fn visit_local_var(&mut self, var: NameAndType, sig: Option<Rc<str>>, span: LocalVariableSpan) {
        if let Some(vis) = self.get_wrapped_visitor() {
-            vis.visit_local_var(name, desc, sig, span);
+            vis.visit_local_var(var, sig, span);
         }
     }
     fn visit_maxs(&mut self, max_stack: u16, max_local: u16) {
@@ -535,28 +560,28 @@ pub trait MethodVisitor {
             None
         }
     }
-    fn visit_insn_annotation(&mut self, type_ref: TypeRef, type_path: Vec<TypePathEntry>, desc: Rc<str>, visible: bool) -> Option<&mut dyn AnnotationVisitor> {
+    fn visit_insn_annotation(&mut self, type_ref: TypeRef, type_path: TypePath, desc: Rc<str>, visible: bool) -> Option<&mut dyn AnnotationVisitor> {
         if let Some(vis) = self.get_wrapped_visitor() {
             vis.visit_insn_annotation(type_ref, type_path, desc, visible)
         } else {
             None
         }
     }
-    fn visit_type_annotation(&mut self, type_ref: TypeRef, type_path: Vec<TypePathEntry>, desc: Rc<str>, visible: bool) -> Option<&mut dyn AnnotationVisitor> {
+    fn visit_type_annotation(&mut self, type_ref: TypeRef, type_path: TypePath, desc: Rc<str>, visible: bool) -> Option<&mut dyn AnnotationVisitor> {
         if let Some(vis) = self.get_wrapped_visitor() {
             vis.visit_type_annotation(type_ref, type_path, desc, visible)
         } else {
             None
         }
     }
-    fn visit_trycatch_annotation(&mut self, type_ref: TypeRef, type_path: Vec<TypePathEntry>, desc: Rc<str>, visible: bool) -> Option<&mut dyn AnnotationVisitor> {
+    fn visit_trycatch_annotation(&mut self, type_ref: TypeRef, type_path: TypePath, desc: Rc<str>, visible: bool) -> Option<&mut dyn AnnotationVisitor> {
         if let Some(vis) = self.get_wrapped_visitor() {
             vis.visit_trycatch_annotation(type_ref, type_path, desc, visible)
         } else {
             None
         }
     }
-    fn visit_local_variable_annotation(&mut self, type_ref: TypeRef, type_path: Vec<TypePathEntry>, spans: Vec<LocalVariableSpan>, desc: Rc<str>, visible: bool) -> Option<&mut dyn AnnotationVisitor> {
+    fn visit_local_variable_annotation(&mut self, type_ref: TypeRef, type_path: TypePath, spans: Vec<LocalVariableSpan>, desc: Rc<str>, visible: bool) -> Option<&mut dyn AnnotationVisitor> {
         if let Some(vis) = self.get_wrapped_visitor() {
             vis.visit_local_variable_annotation(type_ref, type_path, spans, desc, visible)
         } else {
@@ -637,15 +662,40 @@ pub trait ModuleVisitor {
     }
 }
 
+pub trait RecordComponentVisitor {
+    fn get_wrapped_visitor(&self) -> Option<&mut dyn RecordComponentVisitor> {
+        None
+    }
+    fn visit_annotation(&mut self, desc: Rc<str>, visible: bool) -> Option<&mut dyn AnnotationVisitor> {
+        if let Some(vis) = self.get_wrapped_visitor() {
+            vis.visit_annotation(desc, visible)
+        } else {
+            None
+        }
+    }
+    fn visit_type_annotation(&mut self, type_ref: TypeRef, type_path: TypePath, desc: Rc<str>, visible: bool) -> Option<&mut dyn AnnotationVisitor> {
+        if let Some(vis) = self.get_wrapped_visitor() {
+            vis.visit_type_annotation(type_ref, type_path, desc, visible)
+        } else {
+            None
+        }
+    }
+    fn visit_end(&mut self) {
+        if let Some(vis) = self.get_wrapped_visitor() {
+            vis.visit_end();
+        }
+    }
+}
+
 pub trait ClassVisitor {
     fn get_wrapped_visitor(&self) -> Option<&mut dyn ClassVisitor> {
         None
     }
-    fn visit_header(&mut self, version_minor:u16, version_major:u16, access:ClassAccess, name: Rc<str>,
+    fn visit_header(&mut self, version: ClassVersion, access:ClassAccess, name: Rc<str>,
                    signature: Option<Rc<str>>, super_name: Option<Rc<str>>,
                    interfaces: Vec<Rc<str>>) {
         if let Some(vis) = self.get_wrapped_visitor() {
-            vis.visit_header(version_minor, version_major, access, name, signature, super_name, interfaces);
+            vis.visit_header(version, access, name, signature, super_name, interfaces);
         }
     }
     fn visit_end(&mut self) {
@@ -658,7 +708,7 @@ pub trait ClassVisitor {
             vis.visit_source(source, debug);
         }
     }
-    fn visit_outer_class(&mut self, owner: Rc<str>, method: Option<(Rc<str>, Rc<str>)>) {
+    fn visit_outer_class(&mut self, owner: Rc<str>, method: Option<NameAndType>) {
         if let Some(vis) = self.get_wrapped_visitor() {
             vis.visit_outer_class(owner, method);
         }
@@ -687,7 +737,7 @@ pub trait ClassVisitor {
             None
         }
     }
-    fn visit_type_annotation(&mut self, type_ref: TypeRef, type_path: Vec<TypePathEntry>, desc: Rc<str>, visible: bool) -> Option<&mut dyn AnnotationVisitor> {
+    fn visit_type_annotation(&mut self, type_ref: TypeRef, type_path: TypePath, desc: Rc<str>, visible: bool) -> Option<&mut dyn AnnotationVisitor> {
         if let Some(vis) = self.get_wrapped_visitor() {
             vis.visit_type_annotation(type_ref, type_path, desc, visible)
         } else {
@@ -699,16 +749,23 @@ pub trait ClassVisitor {
             vis.visit_inner_class(inner_name, outer_name, simple_inner_name, access);
         }
     }
-    fn visit_field(&mut self, access: FieldAccess, name: Rc<str>, desc: Rc<str>, signature: Option<Rc<str>>, value: Option<ClassConstant>) -> Option<&mut dyn FieldVisitor> {
+    fn visit_field(&mut self, access: FieldAccess, field: NameAndType, signature: Option<Rc<str>>, value: Option<ClassConstant>) -> Option<&mut dyn FieldVisitor> {
         if let Some(vis) = self.get_wrapped_visitor() {
-            vis.visit_field(access, name, desc, signature, value)
+            vis.visit_field(access, field, signature, value)
         } else {
             None
         }
     }
-    fn visit_method(&mut self, access: MethodAccess, name: Rc<str>, desc: Rc<str>, signature: Option<Rc<str>>, exceptions: Vec<Rc<str>>) -> Option<&mut dyn MethodVisitor> {
+    fn visit_record_component(&mut self, record_component: NameAndType, signature: Option<Rc<str>>) -> Option<&mut dyn RecordComponentVisitor> {
         if let Some(vis) = self.get_wrapped_visitor() {
-            vis.visit_method(access, name, desc, signature, exceptions)
+            vis.visit_record_component(record_component, signature)
+        } else {
+            None
+        }
+    }
+    fn visit_method(&mut self, access: MethodAccess, method: NameAndType, signature: Option<Rc<str>>, exceptions: Vec<Rc<str>>) -> Option<&mut dyn MethodVisitor> {
+        if let Some(vis) = self.get_wrapped_visitor() {
+            vis.visit_method(access, method, signature, exceptions)
         } else {
             None
         }
@@ -763,14 +820,14 @@ mod tests {
         fn visit_lookupswitch_insn(&mut self, dflt: Label, pairs: Vec<(i32, Label)>) {
             eprintln!("{}: {:?}, {:?}", function!(), dflt, pairs);
         }
-        fn visit_local_var(&mut self, name: Rc<str>, desc: Rc<str>, sig: Option<Rc<str>>, span: LocalVariableSpan) {
-            eprintln!("{}: {:?}, {:?}, {:?}, {:?}", function!(), name, desc, sig, span);
+        fn visit_local_var(&mut self, var: NameAndType, sig: Option<Rc<str>>, span: LocalVariableSpan) {
+            eprintln!("{}: {:?}, {:?}, {:?}", function!(), var, sig, span);
         }
-        fn visit_frame(&mut self, mode: FrameMode, n_locals: u16, locals: &[FrameItem], n_stack: u16, stack: &[FrameItem]) {
-            eprintln!("{}: {:?}, {:?}, {:?}, {:?}, {:?}", function!(), mode, n_locals, locals, n_stack, stack);
+        fn visit_frame(&mut self, mode: FrameMode, locals: &[FrameItem], stack: &[FrameItem]) {
+            eprintln!("{}: {:?}, {:?}, {:?}", function!(), mode, locals, stack);
         }
-        fn visit_indy_insn(&mut self, name: Rc<str>, desc: Rc<str>, bsm: Handle, args: Vec<ClassConstant>) {
-            eprintln!("{}: {:?}, {:?}, {:?}, {:?}", function!(), name, desc, bsm, args);
+        fn visit_indy_insn(&mut self, method: NameAndType, bsm: Handle, args: Vec<ClassConstant>) {
+            eprintln!("{}: {:?}, {:?}, {:?}", function!(), method, bsm, args);
         }
         fn visit_tableswitch_insn(&mut self, min: i32, max: i32, dflt: Label, labels: Vec<Label>) {
             eprintln!("{}: {:?}, {:?}, {:?}, {:?}", function!(), min, max, dflt, labels);
@@ -791,24 +848,24 @@ mod tests {
             eprintln!("{}: {:?}, {:?}", function!(), desc, visible);
             return unsafe { Some(&mut AV) };
         }
-        fn visit_type_annotation(&mut self, type_ref: TypeRef, type_path: Vec<TypePathEntry>, desc: Rc<str>, visible: bool) -> Option<&mut dyn AnnotationVisitor> {
+        fn visit_type_annotation(&mut self, type_ref: TypeRef, type_path: TypePath, desc: Rc<str>, visible: bool) -> Option<&mut dyn AnnotationVisitor> {
             eprintln!("{}: {:?}, {:?}, {:?}, {:?}", function!(), type_ref, type_path, desc, visible);
             return unsafe { Some(&mut AV) };
         }
-        fn visit_insn_annotation(&mut self, type_ref: TypeRef, type_path: Vec<TypePathEntry>, desc: Rc<str>, visible: bool) -> Option<&mut dyn AnnotationVisitor> {
+        fn visit_insn_annotation(&mut self, type_ref: TypeRef, type_path: TypePath, desc: Rc<str>, visible: bool) -> Option<&mut dyn AnnotationVisitor> {
             eprintln!("{}: {:?}, {:?}, {:?}, {:?}", function!(), type_ref, type_path, desc, visible);
             return unsafe { Some(&mut AV) };
         }
-        fn visit_trycatch_annotation(&mut self, type_ref: TypeRef, type_path: Vec<TypePathEntry>, desc: Rc<str>, visible: bool) -> Option<&mut dyn AnnotationVisitor> {
+        fn visit_trycatch_annotation(&mut self, type_ref: TypeRef, type_path: TypePath, desc: Rc<str>, visible: bool) -> Option<&mut dyn AnnotationVisitor> {
             eprintln!("{}: {:?}, {:?}, {:?}, {:?}", function!(), type_ref, type_path, desc, visible);
             return unsafe { Some(&mut AV) };
         }
-        fn visit_local_variable_annotation(&mut self, type_ref: TypeRef, type_path: Vec<TypePathEntry>, spans: Vec<LocalVariableSpan>, desc: Rc<str>, visible: bool) -> Option<&mut dyn AnnotationVisitor> {
+        fn visit_local_variable_annotation(&mut self, type_ref: TypeRef, type_path: TypePath, spans: Vec<LocalVariableSpan>, desc: Rc<str>, visible: bool) -> Option<&mut dyn AnnotationVisitor> {
                 eprintln!("{}: {:?}, {:?}, {:?}, {:?}, {:?}", function!(), type_ref, type_path, spans, desc, visible);
             return unsafe { Some(&mut AV) };
         }
-        fn visit_field_method_insn(&mut self, opcode: u8, owner: Rc<str>, name: Rc<str>, desc: Rc<str>) {
-            eprintln!("{}: {:?}, {:?}, {:?}, {:?}", function!(), opcode_to_name(opcode), owner, name, desc);
+        fn visit_field_method_insn(&mut self, opcode: u8, owner: Rc<str>, method: NameAndType) {
+            eprintln!("{}: {:?}, {:?}, {:?}", function!(), opcode_to_name(opcode), owner, method);
         }
         fn visit_try_catch(&mut self, start: Label, end: Label, handler: Label, catch_type: Option<Rc<str>>) {
             eprintln!("{}: {:?}, {:?}, {:?}, {:?}", function!(), start, end, handler, catch_type);
@@ -820,12 +877,12 @@ mod tests {
             eprintln!("{}: {:?}, {:?}, {:?}, {:?}", function!(), inner_name, outer_name, simple_inner_name, access);
 
         }
-        fn visit_header(&mut self, version_minor:u16, version_major:u16, access:ClassAccess, name: Rc<str>,
+        fn visit_header(&mut self, version: ClassVersion, access:ClassAccess, name: Rc<str>,
                         signature: Option<Rc<str>>, super_name: Option<Rc<str>>,
                         interfaces: Vec<Rc<str>>) {
-            eprintln!("{}: {:?}, {:?}, {:?}, {:?}, {:?}, {:?}, {:?}", function!(), version_minor, version_major, access, name, signature, interfaces, super_name);
+            eprintln!("{}: {:?}, {:?}, {:?}, {:?}, {:?}, {:?}", function!(), version, access, name, signature, interfaces, super_name);
         }
-        fn visit_outer_class(&mut self, owner: Rc<str>, method: Option<(Rc<str>, Rc<str>)>) {
+        fn visit_outer_class(&mut self, owner: Rc<str>, method: Option<NameAndType>) {
             eprintln!("{}: {:?}, {:?}", function!(), owner, method);
         }
         fn visit_source(&mut self, source: Option<Rc<str>>, debug: Option<String>) {
@@ -835,17 +892,20 @@ mod tests {
             eprintln!("{}: {:?}, {:?}", function!(), desc, visible);
             return unsafe { Some(&mut AV) };
         }
-        fn visit_type_annotation(&mut self, type_ref: TypeRef, type_path: Vec<TypePathEntry>, desc: Rc<str>, visible: bool) -> Option<&mut dyn AnnotationVisitor> {
+        fn visit_type_annotation(&mut self, type_ref: TypeRef, type_path: TypePath, desc: Rc<str>, visible: bool) -> Option<&mut dyn AnnotationVisitor> {
             eprintln!("{}: {:?}, {:?}, {:?}, {:?}", function!(), type_ref, type_path, desc, visible);
             return unsafe { Some(&mut AV) };
         }
-        fn visit_field(&mut self, access: FieldAccess, name: Rc<str>, desc: Rc<str>, signature: Option<Rc<str>>, value: Option<ClassConstant>) -> Option<&mut dyn FieldVisitor> {
-            eprintln!("{}: {:?}, {:?}, {:?}, {:?}, {:?}", function!(), access, name, desc, signature, value);
-            unsafe {Some(&mut FV)}
-
+        fn visit_record_component(&mut self, record_component: NameAndType, signature: Option<Rc<str>>) -> Option<&mut dyn RecordComponentVisitor> {
+            eprintln!("{}: {:?}, {:?}", function!(), record_component, signature);
+            unsafe {Some(&mut RCV)}
         }
-        fn visit_method(&mut self, access: MethodAccess, name: Rc<str>, desc: Rc<str>, signature: Option<Rc<str>>, exceptions: Vec<Rc<str>>) -> Option<&mut dyn MethodVisitor> {
-            eprintln!("{}: {:?}, {:?}, {:?}, {:?}, {:?}", function!(), access, name, desc, signature, exceptions);
+        fn visit_field(&mut self, access: FieldAccess, field: NameAndType, signature: Option<Rc<str>>, value: Option<ClassConstant>) -> Option<&mut dyn FieldVisitor> {
+            eprintln!("{}: {:?}, {:?}, {:?}, {:?}", function!(), access, field, signature, value);
+            unsafe {Some(&mut FV)}
+        }
+        fn visit_method(&mut self, access: MethodAccess, method: NameAndType, signature: Option<Rc<str>>, exceptions: Vec<Rc<str>>) -> Option<&mut dyn MethodVisitor> {
+            eprintln!("{}: {:?}, {:?}, {:?}, {:?}", function!(), access, method, signature, exceptions);
             unsafe {Some(&mut MV)}
         }
         fn visit_end(&mut self) {
@@ -879,7 +939,22 @@ mod tests {
             eprintln!("{}: {:?}, {:?}", function!(), desc, visible);
             return unsafe { Some(&mut AV) };
         }
-        fn visit_type_annotation(&mut self, type_ref: TypeRef, type_path: Vec<TypePathEntry>, desc: Rc<str>, visible: bool) -> Option<&mut dyn AnnotationVisitor> {
+        fn visit_type_annotation(&mut self, type_ref: TypeRef, type_path: TypePath, desc: Rc<str>, visible: bool) -> Option<&mut dyn AnnotationVisitor> {
+            eprintln!("{}: {:?}, {:?}, {:?}, {:?}", function!(), type_ref, type_path, desc, visible);
+            return unsafe { Some(&mut AV) };
+        }
+        fn visit_end(&mut self) {
+            eprintln!("{}", function!());
+        }
+    }
+    struct RcVis;
+    static mut RCV: RcVis = RcVis {};
+    impl RecordComponentVisitor for RcVis {
+        fn visit_annotation(&mut self, desc: Rc<str>, visible: bool) -> Option<&mut dyn AnnotationVisitor> {
+            eprintln!("{}: {:?}, {:?}", function!(), desc, visible);
+            return unsafe { Some(&mut AV) };
+        }
+        fn visit_type_annotation(&mut self, type_ref: TypeRef, type_path: TypePath, desc: Rc<str>, visible: bool) -> Option<&mut dyn AnnotationVisitor> {
             eprintln!("{}: {:?}, {:?}, {:?}, {:?}", function!(), type_ref, type_path, desc, visible);
             return unsafe { Some(&mut AV) };
         }
@@ -892,7 +967,7 @@ mod tests {
         eprintln!("{}", std::mem::size_of::<writer::ClassWriter>());
         let mut bytes = Vec::new();
         File::open("/Users/Alice/Desktop/eclipse-workspace/class2json/target/classes/class2json/parse/Main.class").unwrap().read_to_end(&mut bytes).unwrap();
-        let reader = super::reader::ClassReader::new(&bytes);
+        let mut reader = super::reader::ClassReader::new(&bytes);
         let mut visitor = SimpleLogger4 {};
         reader.accept(&mut visitor, ClassReaderFlags::empty()).unwrap();
     }

@@ -1,8 +1,8 @@
-use super::{ClassVisitor, MethodVisitor, AnnotationVisitor, FieldVisitor, ModuleVisitor};
+use super::{ClassVisitor, MethodVisitor, AnnotationVisitor, FieldVisitor, ModuleVisitor, RecordComponentVisitor};
 use super::{ParameterAccess, ClassAccess, MethodAccess, FieldAccess, InnerClassAccess};
 use super::{ExportFlags, RequireFlags, ModuleFlags};
-use super::{ClassConstant, Label, Handle, TypePathEntry, TypeRef};
-use super::{FrameItem, FrameMode, AnnotationPrimitive, LocalVariableSpan};
+use super::{ClassConstant, Label, Handle, TypePath, TypeRef, ClassVersion};
+use super::{FrameItem, FrameMode, AnnotationPrimitive, LocalVariableSpan, NameAndType};
 use std::{
     rc::Rc,
     vec::Vec,
@@ -11,22 +11,19 @@ use std::{
 };
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct FieldNode {
-    pub access: FieldAccess,
-    pub desc: Rc<str>,
+pub struct RecordComponentNode {
+    pub id: NameAndType,
     pub invisible_annotations: Vec<AnnotationNode>,
     pub invisible_type_annotations: Vec<TypeAnnotationNode>,
-    pub name: Rc<str>,
     pub signature: Option<Rc<str>>,
-    pub value: Option<ClassConstant>,
     pub visible_annotations: Vec<AnnotationNode>,
     pub visible_type_annotations: Vec<TypeAnnotationNode>
 }
 
-impl FieldNode {
-    pub fn new(access: FieldAccess, name: Rc<str>, desc: Rc<str>, signature: Option<Rc<str>>, value: Option<ClassConstant>) -> FieldNode {
-        FieldNode {
-            access, name, desc, signature, value,
+impl RecordComponentNode {
+    pub fn new(id: NameAndType, signature: Option<Rc<str>>) -> RecordComponentNode {
+        RecordComponentNode {
+            id, signature,
             invisible_annotations: Vec::new(),
             invisible_type_annotations: Vec::new(),
             visible_annotations: Vec::new(),
@@ -34,7 +31,78 @@ impl FieldNode {
         }
     }
     pub fn accept(&self, vis: &mut dyn ClassVisitor) {
-        if let Some(fv) = vis.visit_field(self.access, self.name.clone(), self.desc.clone(), self.signature.clone(), self.value.clone()) {
+        if let Some(rcv) = vis.visit_record_component(self.id.clone(), self.signature.clone()) {
+            for ann in &self.visible_annotations {
+                if let Some(vis) = rcv.visit_annotation(ann.desc.clone(), true) {
+                    ann.accept(vis);
+                }
+            }
+            for ann in &self.invisible_annotations {
+                if let Some(vis) = rcv.visit_annotation(ann.desc.clone(), false) {
+                    ann.accept(vis);
+                }
+            }
+            for ann in &self.invisible_type_annotations {
+                if let Some(vis) = rcv.visit_type_annotation(ann.type_ref, ann.type_path.clone(), ann.annotation.desc.clone(), false) {
+                    ann.annotation.accept(vis);
+                }
+            }
+            for ann in &self.visible_type_annotations {
+                if let Some(vis) = rcv.visit_type_annotation(ann.type_ref, ann.type_path.clone(), ann.annotation.desc.clone(), true) {
+                    ann.annotation.accept(vis);
+                }
+            }
+            rcv.visit_end();
+        }
+    }
+}
+impl RecordComponentVisitor for RecordComponentNode {
+    fn visit_annotation(&mut self, desc: Rc<str>, visible: bool) -> Option<&mut dyn AnnotationVisitor> {
+        let at = AnnotationNode::new(desc);
+        if visible {
+            self.visible_annotations.push(at);
+            self.visible_annotations.last_mut().map(|c| c as &mut dyn AnnotationVisitor)
+        } else {
+            self.invisible_annotations.push(at);
+            self.invisible_annotations.last_mut().map(|c| c as &mut dyn AnnotationVisitor)
+        }
+    }
+    fn visit_type_annotation(&mut self, type_ref: TypeRef, type_path: TypePath, desc: Rc<str>, visible: bool)-> Option<&mut dyn AnnotationVisitor> {
+        let at = TypeAnnotationNode::new(type_ref, type_path, desc);
+        if visible {
+            self.visible_type_annotations.push(at);
+            self.visible_type_annotations.last_mut().map(|c| &mut c.annotation as &mut dyn AnnotationVisitor)
+        } else {
+            self.invisible_type_annotations.push(at);
+            self.invisible_type_annotations.last_mut().map(|c| &mut c.annotation as &mut dyn AnnotationVisitor)
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FieldNode {
+    pub access: FieldAccess,
+    pub id: NameAndType,
+    pub invisible_annotations: Vec<AnnotationNode>,
+    pub invisible_type_annotations: Vec<TypeAnnotationNode>,
+    pub signature: Option<Rc<str>>,
+    pub value: Option<ClassConstant>,
+    pub visible_annotations: Vec<AnnotationNode>,
+    pub visible_type_annotations: Vec<TypeAnnotationNode>
+}
+
+impl FieldNode {
+    pub fn new(access: FieldAccess, id: NameAndType, signature: Option<Rc<str>>, value: Option<ClassConstant>) -> FieldNode {
+        FieldNode {
+            access, id, signature, value,
+            invisible_annotations: Vec::new(),
+            invisible_type_annotations: Vec::new(),
+            visible_annotations: Vec::new(),
+            visible_type_annotations: Vec::new()
+        }
+    }
+    pub fn accept(&self, vis: &mut dyn ClassVisitor) {
+        if let Some(fv) = vis.visit_field(self.access, self.id.clone(), self.signature.clone(), self.value.clone()) {
             for ann in &self.visible_annotations {
                 if let Some(vis) = fv.visit_annotation(ann.desc.clone(), true) {
                     ann.accept(vis);
@@ -70,7 +138,7 @@ impl FieldVisitor for FieldNode {
             self.invisible_annotations.last_mut().map(|c| c as &mut dyn AnnotationVisitor)
         }
     }
-    fn visit_type_annotation(&mut self, type_ref: TypeRef, type_path: Vec<TypePathEntry>, desc: Rc<str>, visible: bool)-> Option<&mut dyn AnnotationVisitor> {
+    fn visit_type_annotation(&mut self, type_ref: TypeRef, type_path: TypePath, desc: Rc<str>, visible: bool)-> Option<&mut dyn AnnotationVisitor> {
         let at = TypeAnnotationNode::new(type_ref, type_path, desc);
         if visible {
             self.visible_type_annotations.push(at);
@@ -166,7 +234,7 @@ impl AnnotationVisitor for AnnotationValue {
             panic!();
         }
     }
-    fn visit_array(&mut self, _: Rc<str>) -> Option<&mut AnnotationVisitor> {
+    fn visit_array(&mut self, _: Rc<str>) -> Option<&mut dyn AnnotationVisitor> {
         if let AnnotationValue::Array(values) = self {
             let val = AnnotationValue::Array(Vec::new());
             values.push(val);
@@ -215,7 +283,7 @@ impl AnnotationVisitor for AnnotationNode {
             unreachable!();
         }
     }
-    fn visit_array(&mut self, name: Rc<str>) -> Option<&mut AnnotationVisitor> {
+    fn visit_array(&mut self, name: Rc<str>) -> Option<&mut dyn AnnotationVisitor> {
         let val = AnnotationValue::Array(Vec::new());
         Some(self.values.entry(name).or_insert(val))
     }
@@ -224,12 +292,12 @@ impl AnnotationVisitor for AnnotationNode {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeAnnotationNode {
     pub type_ref: TypeRef,
-    pub type_path: Vec<TypePathEntry>,
+    pub type_path: TypePath,
     pub annotation: AnnotationNode,
 }
 
 impl TypeAnnotationNode {
-    pub fn new(type_ref: TypeRef, type_path: Vec<TypePathEntry>, desc: Rc<str>) -> TypeAnnotationNode {
+    pub fn new(type_ref: TypeRef, type_path: TypePath, desc: Rc<str>) -> TypeAnnotationNode {
         let annotation = AnnotationNode::new(desc);
         TypeAnnotationNode {
             type_path, type_ref, annotation
@@ -253,10 +321,10 @@ pub struct InstructionNode {
 #[derive(Debug, Clone, PartialEq)]
 pub enum InstructionData {
     NoArgInsn{opcode: u8},
-    FieldMethodInsn{opcode: u8, owner: Rc<str>, name: Rc<str>, desc: Rc<str>},
+    FieldMethodInsn{opcode: u8, owner: Rc<str>, method: NameAndType},
     IincInsn{var: u16, by: i16},
     IntInsn{opcode: u8, operand: i32},
-    InvokeDynamic{bsm: Handle, args: Vec<ClassConstant>, desc: Rc<str>, name: Rc<str>},
+    InvokeDynamic{bsm: Handle, args: Vec<ClassConstant>, method: NameAndType},
     JumpInsn{opcode: u8, label: Label},
     LabelNode{label: Label},
     LdcInsn{data: ClassConstant},
@@ -266,7 +334,7 @@ pub enum InstructionData {
     TableswitchInsn{min: i32, max: i32, dflt: Label, labels: Vec<Label>},
     TypeInsn{opcode: u8, ty: Rc<str>},
     VarInsn{opcode: u8, var: u16},
-    FrameNode{mode: FrameMode, n_locals: u16, locals: Vec<FrameItem>, n_stack: u16, stack: Vec<FrameItem>}
+    FrameNode{mode: FrameMode, locals: Vec<FrameItem>, stack: Vec<FrameItem>}
 }
 
 impl InstructionNode {
@@ -282,9 +350,9 @@ impl InstructionNode {
             opcode
         })
     }
-    pub fn new_field_method_insn(opcode: u8, owner: Rc<str>, name: Rc<str>, desc: Rc<str>) -> InstructionNode {
+    pub fn new_field_method_insn(opcode: u8, owner: Rc<str>, method: NameAndType) -> InstructionNode {
         InstructionNode::new_raw(InstructionData::FieldMethodInsn {
-            opcode, owner, name, desc
+            opcode, owner, method
         })
     }
     pub fn new_iinc_insn(var: u16, by: i16) -> InstructionNode {
@@ -297,9 +365,9 @@ impl InstructionNode {
             opcode, operand
         })
     }
-    pub fn new_indy_insn(bsm: Handle, args: Vec<ClassConstant>, desc: Rc<str>, name: Rc<str>) -> InstructionNode {
+    pub fn new_indy_insn(bsm: Handle, args: Vec<ClassConstant>, method: NameAndType) -> InstructionNode {
         InstructionNode::new_raw(InstructionData::InvokeDynamic {
-            bsm, args, desc, name
+            bsm, args, method
         })
     }
     pub fn new_jump_insn(opcode: u8, label: Label) -> InstructionNode {
@@ -347,9 +415,9 @@ impl InstructionNode {
             opcode, var
         })
     }
-    pub fn new_frame_insn(mode: FrameMode, n_locals: u16, locals: Vec<FrameItem>, n_stack: u16, stack: Vec<FrameItem>) -> InstructionNode {
+    pub fn new_frame_insn(mode: FrameMode, locals: Vec<FrameItem>, stack: Vec<FrameItem>) -> InstructionNode {
         InstructionNode::new_raw(InstructionData::FrameNode {
-            mode, n_locals, locals, n_stack, stack
+            mode, locals, stack
         })
     }
     pub fn accept(&self, vis: &mut dyn MethodVisitor) {
@@ -357,8 +425,8 @@ impl InstructionNode {
             InstructionData::NoArgInsn {opcode} => {
                 vis.visit_insn(*opcode);
             },
-            InstructionData::FieldMethodInsn {opcode, owner, name, desc} => {
-                vis.visit_field_method_insn(*opcode, owner.clone(), name.clone(), desc.clone());
+            InstructionData::FieldMethodInsn {opcode, owner, method} => {
+                vis.visit_field_method_insn(*opcode, owner.clone(), method.clone());
             },
             InstructionData::IincInsn {var, by} => {
                 vis.visit_iinc_insn(*var, *by);
@@ -366,8 +434,8 @@ impl InstructionNode {
             InstructionData::IntInsn {opcode, operand} => {
                 vis.visit_int_insn(*opcode, *operand);
             },
-            InstructionData::InvokeDynamic {bsm, args, desc, name} => {
-                vis.visit_indy_insn(name.clone(), desc.clone(), bsm.clone(), args.clone());
+            InstructionData::InvokeDynamic {bsm, args, method} => {
+                vis.visit_indy_insn(method.clone(), bsm.clone(), args.clone());
             },
             InstructionData::JumpInsn {opcode, label} => {
                 vis.visit_jump_insn(*opcode, *label);
@@ -396,8 +464,8 @@ impl InstructionNode {
             InstructionData::VarInsn{opcode, var} => {
                 vis.visit_var_insn(*opcode, *var);
             },
-            InstructionData::FrameNode {mode, n_locals, locals, n_stack, stack} => {
-                vis.visit_frame(*mode, *n_locals, locals, *n_stack, stack);
+            InstructionData::FrameNode {mode, locals, stack} => {
+                vis.visit_frame(*mode, locals, stack);
             }
         }
         for tann in &self.visible_type_annotations {
@@ -433,23 +501,22 @@ impl ParameterNode {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LocalVariableNode {
-    pub desc: Rc<str>,
+    pub id: NameAndType,
     pub span: LocalVariableSpan,
-    pub name: Rc<str>,
     pub signature: Option<Rc<str>>,
 }
 
 impl LocalVariableNode {
-    pub fn new(name: Rc<str>, desc: Rc<str>, signature: Option<Rc<str>>, start: Label, index: u16, end: Label) -> LocalVariableNode {
+    pub fn new(id: NameAndType, signature: Option<Rc<str>>, start: Label, index: u16, end: Label) -> LocalVariableNode {
         let span = LocalVariableSpan {
             start, index, end
         };
         LocalVariableNode {
-            name, desc, signature, span
+            id, signature, span
         }
     }
     pub fn accept(&self, vis: &mut dyn MethodVisitor) {
-        vis.visit_local_var(self.name.clone(), self.desc.clone(), self.signature.clone(), self.span);
+        vis.visit_local_var(self.id.clone(), self.signature.clone(), self.span);
     }
 }
 
@@ -490,7 +557,7 @@ impl TryCatchBlockNode {
 pub struct MethodNode {
     pub access: MethodAccess,
     pub annotation_default: Option<AnnotationNode>,
-    pub desc: Rc<str>,
+    pub id: NameAndType,
     pub exceptions: Vec<Rc<str>>,
     pub instructions: Vec<InstructionNode>,
     pub invisible_annotable_parameter_count: Option<u8>,
@@ -501,7 +568,6 @@ pub struct MethodNode {
     pub local_variables: Vec<LocalVariableNode>,
     pub max_locals: u16,
     pub max_stack: u16,
-    pub name: Rc<str>,
     pub parameters: Vec<ParameterNode>,
     pub signature: Option<Rc<str>>,
     pub try_catch_blocks: Vec<TryCatchBlockNode>,
@@ -513,9 +579,9 @@ pub struct MethodNode {
 }
 
 impl MethodNode {
-    pub fn new(access: MethodAccess, name: Rc<str>, desc: Rc<str>, signature: Option<Rc<str>>, exceptions: Vec<Rc<str>>) -> MethodNode {
+    pub fn new(access: MethodAccess, id: NameAndType, signature: Option<Rc<str>>, exceptions: Vec<Rc<str>>) -> MethodNode {
         MethodNode {
-            access, name, desc, signature, exceptions,
+            access, id, signature, exceptions,
             annotation_default: None,
             instructions: Vec::new(),
             invisible_annotable_parameter_count: None,
@@ -536,10 +602,10 @@ impl MethodNode {
         }
     }
     pub fn new_empty() -> MethodNode {
-        MethodNode::new(MethodAccess::empty(), Rc::from(""), Rc::from(""), None, Vec::new())
+        MethodNode::new(MethodAccess::empty(), NameAndType::new(Rc::from(""), Rc::from("")), None, Vec::new())
     }
     pub fn accept_cv(&self, vis: &mut dyn ClassVisitor) {
-        if let Some(mv) = vis.visit_method(self.access, self.name.clone(), self.desc.clone(), self.signature.clone(), self.exceptions.clone()) {
+        if let Some(mv) = vis.visit_method(self.access, self.id.clone(), self.signature.clone(), self.exceptions.clone()) {
             self.accept_mv(mv);
         }
     }
@@ -617,8 +683,8 @@ impl MethodVisitor for MethodNode {
         self.annotation_default = Some(AnnotationNode::new(Rc::from("")));
         self.annotation_default.as_mut().map(|c| c as &mut dyn AnnotationVisitor)
     }
-    fn visit_field_method_insn(&mut self, opcode: u8, owner: Rc<str>, name: Rc<str>, desc: Rc<str>) {
-        let is = InstructionNode::new_field_method_insn(opcode, owner, name, desc);
+    fn visit_field_method_insn(&mut self, opcode: u8, owner: Rc<str>, method: NameAndType) {
+        let is = InstructionNode::new_field_method_insn(opcode, owner, method);
         self.instructions.push(is);
     }
     fn visit_insn(&mut self, opcode: u8) {
@@ -633,8 +699,8 @@ impl MethodVisitor for MethodNode {
         let is = InstructionNode::new_int_insn(opcode, operand);
         self.instructions.push(is);
     }
-    fn visit_indy_insn(&mut self, name: Rc<str>, desc: Rc<str>, bsm: Handle, args: Vec<ClassConstant>) {
-        let is = InstructionNode::new_indy_insn(bsm, args, desc, name);
+    fn visit_indy_insn(&mut self, method: NameAndType, bsm: Handle, args: Vec<ClassConstant>) {
+        let is = InstructionNode::new_indy_insn(bsm, args, method);
         self.instructions.push(is);
     }
     fn visit_jump_insn(&mut self, opcode: u8, label: Label) {
@@ -673,8 +739,8 @@ impl MethodVisitor for MethodNode {
         let is = InstructionNode::new_var_insn(opcode, var);
         self.instructions.push(is);
     }
-    fn visit_frame(&mut self, mode: FrameMode, n_locals: u16, locals: &[FrameItem], n_stack: u16, stack: &[FrameItem]) {
-        let is = InstructionNode::new_frame_insn(mode, n_locals, locals.into(), n_stack, stack.into());
+    fn visit_frame(&mut self, mode: FrameMode, locals: &[FrameItem], stack: &[FrameItem]) {
+        let is = InstructionNode::new_frame_insn(mode, locals.into(), stack.into());
         self.instructions.push(is);
     }
 
@@ -695,7 +761,7 @@ impl MethodVisitor for MethodNode {
             self.invisible_annotations.last_mut().map(|c| c as &mut dyn AnnotationVisitor)
         }
     }
-    fn visit_type_annotation(&mut self, type_ref: TypeRef, type_path: Vec<TypePathEntry>, desc: Rc<str>, visible: bool) -> Option<&mut dyn AnnotationVisitor> {
+    fn visit_type_annotation(&mut self, type_ref: TypeRef, type_path: TypePath, desc: Rc<str>, visible: bool) -> Option<&mut dyn AnnotationVisitor> {
         let at = TypeAnnotationNode::new(type_ref, type_path, desc);
         if visible {
             self.visible_type_annotations.push(at);
@@ -705,7 +771,7 @@ impl MethodVisitor for MethodNode {
             self.invisible_type_annotations.last_mut().map(|c| &mut c.annotation as &mut dyn AnnotationVisitor)
         }
     }
-    fn visit_trycatch_annotation(&mut self, type_ref: TypeRef, type_path: Vec<TypePathEntry>, desc: Rc<str>, visible: bool) -> Option<&mut dyn AnnotationVisitor> {
+    fn visit_trycatch_annotation(&mut self, type_ref: TypeRef, type_path: TypePath, desc: Rc<str>, visible: bool) -> Option<&mut dyn AnnotationVisitor> {
         let at = TypeAnnotationNode::new(type_ref, type_path, desc);
         if visible {
             self.try_catch_blocks.last_mut().unwrap().visible_type_annotations.push(at);
@@ -715,7 +781,7 @@ impl MethodVisitor for MethodNode {
             self.try_catch_blocks.last_mut().unwrap().invisible_type_annotations.last_mut().map(|c| &mut c.annotation as &mut dyn AnnotationVisitor)
         }
     }
-    fn visit_insn_annotation(&mut self, type_ref: TypeRef, type_path: Vec<TypePathEntry>, desc: Rc<str>, visible: bool) -> Option<&mut dyn AnnotationVisitor> {
+    fn visit_insn_annotation(&mut self, type_ref: TypeRef, type_path: TypePath, desc: Rc<str>, visible: bool) -> Option<&mut dyn AnnotationVisitor> {
         let at = TypeAnnotationNode::new(type_ref, type_path, desc);
         if visible {
             self.instructions.last_mut().unwrap().visible_type_annotations.push(at);
@@ -725,7 +791,7 @@ impl MethodVisitor for MethodNode {
             self.instructions.last_mut().unwrap().invisible_type_annotations.last_mut().map(|c| &mut c.annotation as &mut dyn AnnotationVisitor)
         }
     }
-    fn visit_local_variable_annotation(&mut self, type_ref: TypeRef, type_path: Vec<TypePathEntry>, spans: Vec<LocalVariableSpan>, desc: Rc<str>, visible: bool) -> Option<&mut dyn AnnotationVisitor> {
+    fn visit_local_variable_annotation(&mut self, type_ref: TypeRef, type_path: TypePath, spans: Vec<LocalVariableSpan>, desc: Rc<str>, visible: bool) -> Option<&mut dyn AnnotationVisitor> {
         let data = TypeAnnotationNode::new(type_ref, type_path, desc);
         let at = LocalVariableAnnotationNode {data, spans};
         if visible {
@@ -913,6 +979,7 @@ impl ModuleVisitor for ModuleNode {
 pub struct ClassNode {
     pub access: ClassAccess,
     pub fields: Vec<FieldNode>,
+    pub record_components: Vec<RecordComponentNode>,
     pub inner_classes: Vec<InnerClassNode>,
     pub interfaces: Vec<Rc<str>>,
     pub invisible_annotations: Vec<AnnotationNode>,
@@ -923,21 +990,20 @@ pub struct ClassNode {
     pub nest_host_class: Option<Rc<str>>,
     pub nest_members: Vec<Rc<str>>,
     pub outer_class: Option<Rc<str>>,
-    pub outer_method: Option<Rc<str>>,
-    pub outer_method_desc: Option<Rc<str>>,
+    pub outer_method: Option<NameAndType>,
     pub signature: Option<Rc<str>>,
     pub source_debug: Option<String>,
     pub source_name: Option<Rc<str>>,
     pub super_name: Option<Rc<str>>,
-    pub version: (u16, u16),
+    pub version: ClassVersion,
     pub visible_annotations: Vec<AnnotationNode>,
     pub visible_type_annotations: Vec<TypeAnnotationNode>
 }
 
 impl ClassVisitor for ClassNode {
-    fn visit_header(&mut self, version_minor: u16, version_major: u16, access: ClassAccess, name: Rc<str>,
+    fn visit_header(&mut self, version: ClassVersion, access: ClassAccess, name: Rc<str>,
             signature: Option<Rc<str>>, super_name: Option<Rc<str>>, interfaces: Vec<Rc<str>>) {
-        self.version = (version_minor, version_major);
+        self.version = version;
         self.access = access;
         self.signature = signature;
         self.super_name = super_name;
@@ -954,12 +1020,9 @@ impl ClassVisitor for ClassNode {
         self.source_name = source;
         self.source_debug = debug;
     }
-    fn visit_outer_class(&mut self, owner: Rc<str>, method: Option<(Rc<str>, Rc<str>)>) {
+    fn visit_outer_class(&mut self, owner: Rc<str>, method: Option<NameAndType>) {
         self.outer_class = Some(owner);
-        if let Some((m, d)) = method {
-            self.outer_method = Some(m);
-            self.outer_method_desc = Some(d);
-        }
+        self.outer_method = method;
     }
     fn visit_inner_class(&mut self, inner_name: Rc<str>, outer_name: Option<Rc<str>>, simple_inner_name: Option<Rc<str>>, access: InnerClassAccess) {
         let nd = InnerClassNode::new(access, inner_name, simple_inner_name, outer_name);
@@ -970,13 +1033,18 @@ impl ClassVisitor for ClassNode {
         self.module = Some(md);
         self.module.as_mut().map(|c| c as &mut dyn ModuleVisitor)
     }
-    fn visit_field(&mut self, access: FieldAccess, name: Rc<str>, desc: Rc<str>, signature: Option<Rc<str>>, value: Option<ClassConstant>) -> Option<&mut dyn FieldVisitor> {
-        let field = FieldNode::new(access, name, desc, signature, value);
+    fn visit_record_component(&mut self, record_component: NameAndType, signature: Option<Rc<str>>) -> Option<&mut dyn RecordComponentVisitor> {
+        let record_comp = RecordComponentNode::new(record_component, signature);
+        self.record_components.push(record_comp);
+        self.record_components.last_mut().map(|c| c as &mut dyn RecordComponentVisitor)
+    }
+    fn visit_field(&mut self, access: FieldAccess, field: NameAndType, signature: Option<Rc<str>>, value: Option<ClassConstant>) -> Option<&mut dyn FieldVisitor> {
+        let field = FieldNode::new(access, field, signature, value);
         self.fields.push(field);
         self.fields.last_mut().map(|c| c as &mut dyn FieldVisitor)
     }
-    fn visit_method(&mut self, access: MethodAccess, name: Rc<str>, desc: Rc<str>, signature: Option<Rc<str>>, exceptions: Vec<Rc<str>>) -> Option<&mut dyn MethodVisitor> {
-        let mt = MethodNode::new(access, name, desc, signature, exceptions);
+    fn visit_method(&mut self, access: MethodAccess, method: NameAndType, signature: Option<Rc<str>>, exceptions: Vec<Rc<str>>) -> Option<&mut dyn MethodVisitor> {
+        let mt = MethodNode::new(access, method, signature, exceptions);
         self.methods.push(mt);
         self.methods.last_mut().map(|c| c as &mut dyn MethodVisitor)
     }
@@ -991,7 +1059,7 @@ impl ClassVisitor for ClassNode {
         }
 
     }
-    fn visit_type_annotation(&mut self, type_ref: TypeRef, type_path: Vec<TypePathEntry>, desc: Rc<str>, visible: bool)-> Option<&mut dyn AnnotationVisitor> {
+    fn visit_type_annotation(&mut self, type_ref: TypeRef, type_path: TypePath, desc: Rc<str>, visible: bool)-> Option<&mut dyn AnnotationVisitor> {
         let at = TypeAnnotationNode::new(type_ref, type_path, desc);
         if visible {
             self.visible_type_annotations.push(at);
@@ -1025,14 +1093,14 @@ impl ClassNode {
             nest_members: Vec::new(),
             outer_class: None,
             outer_method: None,
-            outer_method_desc: None,
             signature: None,
             source_debug: None,
             source_name: None,
             super_name: None,
-            version: (0, 0),
+            version: ClassVersion::new(0, 0),
             visible_annotations: Vec::new(),
-            visible_type_annotations: Vec::new()
+            visible_type_annotations: Vec::new(),
+            record_components: Vec::new()
         }
     }
     pub fn from_bytes(bytes: &[u8]) -> ClassNode {
@@ -1042,7 +1110,7 @@ impl ClassNode {
         visitor
     }
     pub fn accept(&self, vis: &mut dyn ClassVisitor) {
-        vis.visit_header(self.version.0, self.version.1, self.access, self.name.clone(), self.signature.clone(), self.super_name.clone(), self.interfaces.clone());
+        vis.visit_header(self.version, self.access, self.name.clone(), self.signature.clone(), self.super_name.clone(), self.interfaces.clone());
         if self.source_name.is_some() || self.source_debug.is_some() {
             vis.visit_source(self.source_name.clone(), self.source_debug.clone());
         }
@@ -1055,12 +1123,7 @@ impl ClassNode {
             vis.visit_nest_host(nh.clone());
         }
         if let Some(oc) = &self.outer_class {
-            let method = if self.outer_method.is_some() {
-                Some((self.outer_method.clone().unwrap(), self.outer_method_desc.clone().unwrap()))
-            } else {
-                None
-            };
-            vis.visit_outer_class(oc.clone(), method);
+            vis.visit_outer_class(oc.clone(), self.outer_method.clone());
         }
         for ann in &self.visible_annotations {
             if let Some(av) = vis.visit_annotation(ann.desc.clone(), true) {
@@ -1090,6 +1153,9 @@ impl ClassNode {
         }
         for fi in &self.fields {
             fi.accept(vis);
+        }
+        for rc in &self.record_components {
+            rc.accept(vis);
         }
         for me in &self.methods {
             me.accept_cv(vis);

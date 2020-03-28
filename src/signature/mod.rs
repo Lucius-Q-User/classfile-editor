@@ -37,7 +37,7 @@ fn flat_map<T, R, F>(opt: Option<T>, f: F) -> Option<R> where F: FnOnce(T) -> Op
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct SignatureWriter {
     data: String,
     visited_type_parameter: bool,
